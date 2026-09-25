@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Runtime data: the SQLite file is created on startup, never committed
+data/
+*.db
+*.sqlite3
+
+# Test artefacts
+.coverage
+htmlcov/
+.pytest_cache/
+
+# Node toolchain (frontend build dependencies)
+node_modules/
+npm-debug.log*
+
+# The built React bundle IS committed: the deployment contract requires the app
+# to run after clone + pip install + `python app.py`, with no Node step.
+!static/dist/
+
+# Local environment overrides
+.env
+
+# OS
+.DS_Store
+Thumbs.db
