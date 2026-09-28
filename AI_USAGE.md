@@ -1,7 +1,7 @@
 # AI Usage Log
 
-One row per meaningful interaction. Routine mechanics — shell syntax errors,
-"what's next", reformatting a command — are not logged; only interactions that
+One row per meaningful interaction. Routine mechanics so shell syntax errors,
+"what's next", and reformatting a command are not logged; only interactions that
 changed a decision or produced code.
 
 Standing architectural constraints referenced below live in `CLAUDE.md` in this
