@@ -1,0 +1,12 @@
+[run]
+# Coverage is measured on domain logic only. The assignment asks for coverage
+# of core business logic rather than framework glue, so Flask blueprints and
+# package docstring modules are excluded.
+source = domains
+omit =
+    */routes.py
+    */__init__.py
+
+[report]
+show_missing = True
+skip_covered = False
