@@ -1,95 +1,205 @@
-# Project Brief: Al-Rahmeh Association for Animals — Assignment 1 Rebuild
+# Project Instructions: Al-Rahmeh Association for Animals
 
-## Context
+This file is my standing brief to you. Read it at the start of every session and
+follow it without asking me to re-explain any of it.
 
-This is Assignment 1 for my Software Development & DevOps course (BCSAI, IE University). This is a real rebuild of a real NGO's website: [Al-Rahmeh Association for Animals](https://www.alrahmehforanimals.org/), a small Jordanian animal rescue I previously audited for another course. I'll hand the finished app back to them. Read the assignment PDF in full before writing any code — it governs grading directly.
+## What I'm building
 
-**Deadline:** 2026-10-04 23:59
+A rebuild of the website of the Al-Rahmeh Association for Animals
+(جمعية الرحمة للرفق بالحيوان), a small animal rescue in Jordan. This is a real
+handover, not an exercise: I audited their live site for another course and I
+intend to give them what we build.
 
-## Hard Technical Constraints (non-negotiable, from the assignment)
+Three things I found broken in that audit, which this rebuild must visibly fix:
 
-- Single process, single container. No microservices, no separate repos.
-- Storage: SQLite, at one documented path (ideally under a `DATA_DIR` env var).
-- Exactly one dependency manifest at the repo root.
-- Do NOT write a Dockerfile, docker-compose.yml, or any `.github/workflows/` CI file — that's provided separately later in the course.
-- No Terraform/Bicep/ARM or other IaC.
-- No real deployment (no custom domain, no Render/Heroku). Must run locally only.
-- No external managed database/cache/queue.
-- Backend must be Python (this is what I'm assessed on and what I need to defend cold in the comprehension check). Frontend can be React + CSS, served by the same single process.
-- Binds to `0.0.0.0`, reads port from an env var with a sane default, starts with one documented command, no interactive setup (`input()`, wizards, manual migrations), starts within a few seconds.
+1. The homepage impact counters ("More than 300 pets found homes...") are
+   hardcoded in the HTML. Replace them with numbers computed from real data at
+   request time.
+2. The donation flow is buried and awkward. Surface it properly.
+3. "Adopt Now" and "Foster Now" go to Google Forms with no backend. Replace them
+   with a real workflow tied to actual animal records.
 
-## Two Required Backend Feature Domains
+The governing specification is `assignment_1.md` in this repo. When my
+instructions and that file disagree, tell me — don't silently pick one.
 
-Both must persist through SQLite, must be logically separable with a clear seam, and business logic must be unit-testable. No shared-DB dependency between them beyond referencing each other's IDs where needed.
+## Stack — decided, do not relitigate
 
-1. **Animal intake & adoption tracking** — animal profiles (name, species, breed, intake date, medical/vaccination history), an adoption status state machine (`available → pending → adopted`, plus `fostering` given how central fostering is to this org's real model), and ideally a simple adopter-fit matching helper. This directly replaces the static, unmanaged pet listings on the real site.
-2. **Donation & impact ledger** — donations logged internally against a purpose (medical fund / food fund / general), with the homepage's impact statistics computed live from this data. This is a direct fix for a real bug I found in my audit: the real site's stat counters ("More than 300 pets found homes...") are hardcoded, not computed from anything real.
+- **Backend: Python 3.11+ with Flask 3.1.** No ORM; use the standard library's
+  `sqlite3` directly. Reasoning is in ADR-1.
+- **Storage: SQLite**, one file at `${DATA_DIR}/alrahmeh.db`.
+- **Frontend: React, built with Vite**, compiled to `static/dist` and served by
+  the same Flask process.
+- **Tests: pytest + pytest-cov.**
 
-## Professor's Feedback and How to Handle It
+Two dependency manifests, both at the repository root: `requirements.txt` and
+`package.json`. This is a deliberate, approved exception to the one-manifest
+rule in section 1a — the mitigation is that `static/dist` is committed, so Node
+is a build-time tool only and is never needed to run the app. Never create a
+manifest inside a subfolder.
 
-He said I could try integrating Stripe as the payment mechanism if time allows, "shouldn't be that hard." Treat this as an **optional stretch goal**, not core scope — do NOT let it block the core two domains or the 70% test coverage bar. If we do add it, it must run in Stripe's test/sandbox mode only (no real transactions, no production keys, fits under §7.6's allowance for "a public API your use case genuinely needs"). If we run out of time and skip it, that becomes a legitimate ADR-5 entry ("what we deliberately chose not to build, and why") — document it honestly either way, don't hide the decision.
+**Stripe is out of scope.** Do not build payment processing. It is ADR-5, the
+"thing I deliberately chose not to build."
 
-## Content Must Match the Real Organization
+## Hard constraints — never violate these
 
-Not generic placeholder content. Reference points from the live site:
+- Single process, single container. One `python app.py` starts everything.
+- Bind `0.0.0.0`. Never `localhost` or `127.0.0.1`.
+- Port from the `PORT` environment variable, default 8000.
+- SQLite path from `DATA_DIR`, default `./data`.
+- No interactive setup at startup: no `input()`, no wizard, no manual migration
+  step. Schema applies itself with `CREATE TABLE IF NOT EXISTS` on boot.
+- Fully configurable through environment variables. Never require a `.env` file
+  to exist, and never make me edit source to reconfigure anything.
+- Must start in a couple of seconds.
+- **Never create** a `Dockerfile`, `docker-compose.yml`, anything under
+  `.github/workflows/`, or any Terraform/Bicep/ARM file. These are explicitly
+  forbidden and would cost me marks.
+- No Redis, RabbitMQ, Celery, cron, or any external database, cache or queue.
+- Keep declared dependencies under 12 across both manifests. Currently 8.
+- Keep the file count between 15 and 50, excluding lockfiles, `.venv` and
+  `node_modules`. Don't split every button into its own component file.
 
-- Real org name: Al-Rahmeh Association for Animals / جمعية الرحمة للرفق بالحيوانات
-- Real core programs to reflect in the UI/copy: Adoption, Fostering, Donating, Volunteering (their four site sections)
-- Bilingual identity (Arabic + English) — at minimum keep Arabic in the branding/header, doesn't need full i18n
-- Real social presence: Facebook and Instagram (facebook.com/Rahmehforanimals, instagram.com/rahmehforanimals)
-- Contact: admin@alrahmeh.org
-- Real broken things from my audit that this rebuild should visibly fix:
-  - Hardcoded/fake stat counters → replace with live-computed stats from the donation ledger
-  - Buried/awkward donation flow → surface it properly
-  - No real backend behind "Adopt Now" / "Foster Now" (currently just Google Forms) → replace with an actual adoption/foster workflow tied to animal records
+## The two feature domains
 
-## Course Scope So Far
+Both persist through SQLite. Both must be independently modularizable: neither
+package imports the other, and they reference each other by primary-key value
+only. That boundary is the seam a later assignment would cut to split them into
+separate services, and I have to be able to point at it.
 
-Use this to guide code quality, not to force pattern-stuffing.
+**1. Animal intake and adoption** (`domains/animals/`)
+Animal profiles: name, species, breed, intake date, medical and vaccination
+history. A placement lifecycle with guarded transitions:
+`available → fostering → pending → adopted`. Fostering is central to how this
+organisation actually operates, so it is a first-class state, not an
+afterthought.
 
-We've covered SOLID principles and code smells:
-- Bloaters break SRP
-- Change Preventers break OCP
-- OO Abusers break LSP
-- Dispensables break ISP
-- Couplers break DIP
+**2. Donation and impact ledger** (`domains/donations/`)
+Append-only donation records against a purpose: medical fund, food fund, or
+general. Impact statistics derived from the ledger, which is what the homepage
+counters read from.
 
-Refactor toward small single-purpose classes, abstract base classes over concrete dependencies, dependency injection at composition roots.
+## Repository layout
 
-We've also covered creational/structural/behavioral design patterns: Singleton, Factory Method, Builder, Adapter, Proxy, Facade, Observer, Strategy, Command.
+```
+requirements.txt  package.json + lock  vite.config.js
+README.md  ADR.md  AI_USAGE.md  pytest.ini  .coveragerc
+app.py            entry point: python app.py
+config.py         env-driven Config dataclass
+db/               schema.sql, connection.py
+domains/
+  animals/        models.py repository.py service.py routes.py
+  donations/      models.py repository.py service.py routes.py
+frontend/src/     main.jsx App.jsx api.js pages/ components/ styles.css
+static/dist/      committed build output
+tests/            conftest.py test_animals_service.py test_donations_service.py
+docs/             report.md architecture.md schema.md
+```
 
-Apply these naturally where they fit — e.g., a `Repository`-style abstraction over SQLite access (DIP), a state-machine-like status transition for adoption (could reasonably use Strategy or just clean explicit logic), maybe Observer if a donation triggers a stat/notification update. **Don't force patterns that don't fit** — forced patterns read as worse code quality, not better, and I need to be able to explain every one cold at the comprehension check.
+Within each domain: `models.py` holds entities and enums, `repository.py` is the
+only thing that touches SQL, `service.py` holds business rules, `routes.py` is a
+Flask blueprint returning JSON. Tests target `service.py` and `models.py`.
+`.coveragerc` omits `routes.py` because section 4 asks for coverage of business
+logic, not routing glue.
 
-## Process Deliverables to Maintain As We Go (not at the end)
+## How I want you to work
 
-- **`ADR.md`** — exactly 5 entries, added incrementally across at least 3 distinct commit dates, in the exact format specified in the assignment (Context / Decision / Alternatives considered / Consequences). Required entries:
-  1. Backend framework choice
-  2. How the two domains stay independently modularizable
-  3. SQLite schema decision
-  4. Testing approach/coverage tradeoffs
-  5. One thing deliberately not built
-- **`AI_USAGE.md`** — a row per meaningful AI interaction (date/commit, tool, prompt, disposition, what changed, and — most important — an explanation in my own words of how the accepted code actually works). Keep this updated every session, not backfilled.
-- **Tests** — pytest with ≥70% coverage on core business logic of both domains (not routing/framework glue). Report the coverage command and result in the README.
+**Git — I do it, not you.** Write the files, then hand me the exact commands to
+stage, commit and push, with the commit message written out. Do not run
+`git commit`, `git push`, `gh pr create` or `gh pr merge` yourself unless I
+explicitly ask in that message. I want to read every diff before it lands.
 
-## Commit Plan
+**One branch per feature, merged by pull request.** Never commit to `main`
+directly. Branch names: `feat/`, `test/`, `docs/`, `chore/`. Merge with
+`--merge`, never `--squash` — squashing destroys the commit cadence I'm graded
+on. A domain branch may stay open across two days so that nothing reaches `main`
+untested.
 
-12+ commits total, spread across 6+ distinct calendar days, no single day over 40% of commits, real descriptive messages, pushed to GitHub. Deadline: 2026-10-04 23:59.
+**Commit messages** describe what changed and why, with a body when the reason
+isn't obvious from the subject. "Initial commit", "WIP", "update" and "fix" are
+worthless to me.
 
-| Day | Date | Focus | Target commits |
-|---|---|---|---|
-| 1 | Sep 25 | Repo init, dependency manifest, project scaffold, README skeleton, ADR-1 (framework choice) | 2 |
-| 2 | Sep 26 | SQLite schema design + migrations, ADR-3 draft (data model) | 1 |
-| 3 | Sep 27 | Domain A (animals/adoption) models + core business logic | 2 |
-| 4 | Sep 28 | Domain A unit tests | 1 |
-| 5 | Sep 29 | Domain B (donations/ledger) models + core logic, ADR-2 (domain separation) | 2 |
-| 6 | Sep 30 | Domain B unit tests, run coverage check | 1 |
-| 7 | Oct 1 | React frontend scaffold, wire up to backend API, apply real NGO content/branding | 2 |
-| 8 | Oct 2 | Stripe test-mode stretch attempt (time permitting) OR polish; fix the real audit issues (live stats, donation flow) | 1 |
-| 9 | Oct 3 | ADR-4 (testing approach), ADR-5 (not built), finalize AI_USAGE.md, write report (§8: SDLC, architecture diagram, schema diagram, README) | 2 |
-| 10 | Oct 4 | Final polish, verify §7 deployment contract end to end, submit | 1 |
+**Verify before you claim.** Actually run the app, actually run the tests,
+actually check the coverage number. Show me the output. Don't tell me something
+works because it looks like it should.
 
-That's 15 commits across 10 distinct days — comfortable margin above the 12-commit/6-day minimum, and no day exceeds 2 commits (well under the 40% cap).
+**Explain things plainly.** If you're presenting me a choice, tell me what each
+option means in concrete terms — what changes on disk, what it costs, what the
+risk is — and give me your recommendation instead of a survey. Skip the jargon
+unless you define it.
 
-## First Step
+## Code quality
 
-Read the full assignment PDF, then propose the SQLite schema for both domains before writing any code, so it can be sanity-checked against ADR-3 before building.
+I'm assessed on SOLID and on design patterns (Singleton, Factory Method,
+Builder, Adapter, Proxy, Facade, Observer, Strategy, Command). Apply them only
+where they genuinely fit. A repository abstraction over SQLite is real
+dependency inversion; guarded status transitions may or may not want Strategy.
+**Forced patterns read as worse code, not better** — and I have to justify every
+one of them from memory. If a plain function is clearer, write the plain
+function.
+
+Small single-purpose classes, dependency injection at the composition root
+(`create_app`), no domain logic inside route handlers.
+
+## Process deliverables — keep current, never backfill
+
+These are 30% of the grade, more than the working features.
+
+**`ADR.md`** — exactly 5 entries, no more. The format is fixed in
+`assignment_1.md` section 5: Context / Decision / Alternatives considered /
+Consequences. Entries must land across at least 3 different commit dates, as the
+decisions are actually made. The five are: (1) backend framework, (2) how the
+domains stay independently modularizable, (3) the SQLite schema decision, (4)
+testing approach and what I left thin, (5) what I chose not to build.
+
+**`AI_USAGE.md`** — add a row every session. Fill in the date, tool, my actual
+prompt, disposition, and what changed. **Leave the last column to me.** That
+column is "in my own words, how this works", and it is the one thing I cannot
+outsource — mark it `⚠️ TODO (me)` with a specific question I need to answer, and
+remind me it's outstanding. Never write it for me.
+
+**Do not commit `AI_USAGE.md`.** Keep updating the file on disk, but never
+include it in a `git add` command you hand me. It stays untracked until I have
+written all of my own explanations, and then I commit it once, at the end. Never
+tell me to run `git add .` or `git add -A` — always name the files explicitly, so
+this file can't be swept in by accident.
+
+**Tests** — at least 70% coverage on the business logic of both domains,
+measured with:
+
+```
+pytest --cov=domains --cov-report=term-missing
+```
+
+Report the real number in the README.
+
+## Why the process matters more than the code
+
+There is a closed-book written exam on this project: six short-answer questions,
+no notes, no device, graded against what's actually in the repo. It multiplies my
+subtotal rather than adding to it, so a weak showing there wipes out good work
+everywhere else.
+
+That changes what I need from you. Don't hand me code I can't account for. If
+something is subtle — why `create_app()` takes a `Config` instead of reading the
+environment itself, why a malformed `PORT` falls back instead of raising — say so
+at the time, so I learn it while it's being written rather than the night before.
+
+## Schedule
+
+Deadline: **2026-10-04 23:59**. Requirement is 12+ commits across 6+ distinct
+calendar days, no single day over 40% of the total, pushed to
+`github.com/salmansour17/alrahmeh-animals`.
+
+| Date | Branch | Lands |
+|---|---|---|
+| Sep 28 | `chore/project-scaffold`, `feat/sqlite-persistence` | scaffold, ADR-1, schema, connection layer, ADR-3 |
+| Sep 29 | `feat/animal-intake-adoption` | entity, repository, guarded transitions, tests, ADR-2 |
+| Sep 30 | `feat/donation-impact-ledger` | ledger, impact stats, tests, coverage run, ADR-4 |
+| Oct 1 | `feat/react-frontend` | Vite at root, api client, router, animal pages |
+| Oct 2 | same branch | homepage counters, donate page, bilingual header, committed build |
+| Oct 3 | `docs/report-and-final-adrs` | ADR-5, architecture and schema diagrams, 4-5 page report |
+| Oct 4 | `chore/deployment-contract-check` | clean-clone verification, final README numbers |
+
+If I fall behind, protect in this order: working domains and their tests first,
+then the process documents, then the frontend. A thin frontend with honest ADRs
+beats a polished one without them.
