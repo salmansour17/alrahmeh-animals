@@ -14,6 +14,7 @@ import logging
 from flask import Flask, jsonify
 
 from config import Config, load_config
+from db.connection import Database
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger(__name__)
@@ -32,6 +33,13 @@ def create_app(config: Config | None = None) -> Flask:
 
     config.data_dir.mkdir(parents=True, exist_ok=True)
 
+    # The composition root: the Database is built once here and handed to
+    # whatever needs it, so no module below this line decides where the SQLite
+    # file lives.
+    database = Database(config.database_path)
+    database.initialise()
+    app.config["DATABASE"] = database
+
     _register_meta_routes(app)
     return app
 
@@ -39,12 +47,19 @@ def create_app(config: Config | None = None) -> Flask:
 def _register_meta_routes(app: Flask) -> None:
     """Endpoints that describe the service rather than either feature domain."""
     config: Config = app.config["APP_CONFIG"]
+    database: Database = app.config["DATABASE"]
 
     @app.get("/api/health")
     def health():
-        """Liveness probe. Deliberately does not touch the database, so it
-        answers even when storage is misconfigured."""
+        """Liveness probe. Deliberately does not query the database, so it still
+        answers when storage is broken."""
         return jsonify(status="ok", database_path=str(config.database_path))
+
+    @app.get("/api/meta/schema")
+    def schema():
+        """Tables currently present. Useful while the domains are being built,
+        and a quick way to confirm the schema applied itself on startup."""
+        return jsonify(tables=database.table_names())
 
     @app.get("/")
     def index():
