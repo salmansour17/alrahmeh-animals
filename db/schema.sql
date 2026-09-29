@@ -62,6 +62,25 @@ CREATE TABLE IF NOT EXISTS placement_requests (
 
 CREATE INDEX IF NOT EXISTS idx_placement_requests_animal ON placement_requests (animal_id);
 
+-- Placement history. animals.status holds only where an animal is now; this
+-- records every move and when it happened, so staff can see that an animal
+-- went back from a foster before being adopted. A row is written in the same
+-- transaction as the status UPDATE it describes, so the two cannot disagree.
+-- Being a new table rather than a new column, it creates itself on an existing
+-- database too: CREATE TABLE IF NOT EXISTS never alters a table already there.
+CREATE TABLE IF NOT EXISTS status_changes (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    animal_id   INTEGER NOT NULL REFERENCES animals (id) ON DELETE CASCADE,
+    from_status TEXT    NOT NULL
+                        CHECK (from_status IN ('available', 'fostering', 'pending', 'adopted')),
+    to_status   TEXT    NOT NULL
+                        CHECK (to_status IN ('available', 'fostering', 'pending', 'adopted')),
+    reason      TEXT,
+    changed_at  TEXT    NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_status_changes_animal ON status_changes (animal_id);
+
 
 -- ===========================================================================
 -- Domain 2: donation and impact ledger
