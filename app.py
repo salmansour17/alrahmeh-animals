@@ -12,9 +12,13 @@ from __future__ import annotations
 import logging
 
 from flask import Flask, jsonify
+from werkzeug.exceptions import HTTPException
 
 from config import Config, load_config
 from db.connection import Database
+from domains.animals.repository import SqliteAnimalRepository
+from domains.animals.routes import create_animals_blueprint
+from domains.animals.service import AnimalService
 from security import require_admin
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
@@ -41,8 +45,22 @@ def create_app(config: Config | None = None) -> Flask:
     database.initialise()
     app.config["DATABASE"] = database
 
+    # Each domain gets its concrete repository here and nowhere else. The
+    # service only knows the AnimalRepository Protocol, so swapping SQLite for
+    # something else would be a change to these lines alone.
+    animal_service = AnimalService(SqliteAnimalRepository(database))
+    app.register_blueprint(create_animals_blueprint(animal_service))
+
+    app.register_error_handler(HTTPException, _json_http_error)
     _register_meta_routes(app)
     return app
+
+
+def _json_http_error(error: HTTPException):
+    """Answer Flask's own errors (unknown URL, wrong method) in JSON, like the
+    domain errors, instead of an HTML page. Unhandled exceptions still become a
+    bare 500 with no traceback, because debug is off unless FLASK_DEBUG=1."""
+    return jsonify(error=error.name.lower().replace(" ", "_")), error.code
 
 
 def _register_meta_routes(app: Flask) -> None:
