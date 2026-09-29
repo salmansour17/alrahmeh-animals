@@ -32,6 +32,10 @@ class Config:
     port: int
     data_dir: Path
     debug: bool
+    # One shared secret for the staff-only endpoints. None means admin access is
+    # switched off entirely; see security.require_admin for why that is the
+    # default rather than a built-in password.
+    admin_password: str | None = None
 
     @property
     def database_path(self) -> Path:
@@ -46,6 +50,9 @@ def load_config() -> Config:
         port=_read_port(),
         data_dir=Path(os.environ.get("DATA_DIR") or DEFAULT_DATA_DIR).resolve(),
         debug=os.environ.get("FLASK_DEBUG", "0") == "1",
+        # Deliberately no default: an unset ADMIN_PASSWORD disables the staff
+        # endpoints rather than falling back to a value an attacker could guess.
+        admin_password=os.environ.get("ADMIN_PASSWORD") or None,
     )
 
 

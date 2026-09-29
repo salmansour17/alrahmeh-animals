@@ -15,6 +15,7 @@ from flask import Flask, jsonify
 
 from config import Config, load_config
 from db.connection import Database
+from security import require_admin
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger(__name__)
@@ -56,9 +57,14 @@ def _register_meta_routes(app: Flask) -> None:
         return jsonify(status="ok", database_path=str(config.database_path))
 
     @app.get("/api/meta/schema")
+    @require_admin
     def schema():
-        """Tables currently present. Useful while the domains are being built,
-        and a quick way to confirm the schema applied itself on startup."""
+        """Tables currently present: a quick way to confirm the schema applied
+        itself on startup.
+
+        Staff-only. It describes the internal storage layout, which is of no use
+        to a visitor and of some use to someone probing the service.
+        """
         return jsonify(tables=database.table_names())
 
     @app.get("/")

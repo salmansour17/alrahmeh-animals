@@ -40,6 +40,13 @@ manifest inside a subfolder.
 **Stripe is out of scope.** Do not build payment processing. It is ADR-5, the
 "thing I deliberately chose not to build."
 
+**Auth: one shared admin password**, read from `ADMIN_PASSWORD` and checked by
+`require_admin` in `security.py`. No users table, no sessions, no password
+hashing — one shared secret is all this organisation needs, and it keeps ADR-1's
+"no user accounts" reasoning literally true. Unset means the staff endpoints fail
+closed with 503; never add a default password. Every write endpoint in either
+domain gets `@require_admin`.
+
 ## Hard constraints — never violate these
 
 - Single process, single container. One `python app.py` starts everything.

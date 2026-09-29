@@ -63,8 +63,33 @@ default. No `.env` file is required.
 | `PORT` | `8000` | TCP port to listen on. Values that are not valid port numbers are ignored with a warning. |
 | `DATA_DIR` | `./data` | Directory holding the SQLite file. Created on startup if absent. |
 | `FLASK_DEBUG` | `0` | Set to `1` for the Flask reloader and tracebacks. Leave unset in deployment. |
+| `ADMIN_PASSWORD` | _(unset)_ | Shared password for the staff-only endpoints. **Unset disables them**, returning 503 rather than allowing access. |
 
 The SQLite database lives at **`${DATA_DIR}/alrahmeh.db`**.
+
+## Staff access
+
+Admitting an animal, moving it through the placement lifecycle and recording a
+donation are staff actions, protected by one shared password supplied as
+`ADMIN_PASSWORD`. Send it as the password half of an HTTP Basic credential; the
+username is ignored, because there is one shared secret rather than a set of
+accounts.
+
+```bash
+ADMIN_PASSWORD=choose-something-long python app.py
+curl -u staff:choose-something-long http://localhost:8000/api/meta/schema
+```
+
+There is deliberately no default password and no fallback. With `ADMIN_PASSWORD`
+unset, the staff endpoints answer 503 and the public site continues to work, so
+a deployment that forgets to configure the secret is locked rather than exposed.
+
+This is not a user-account system, and it is not meant to be: two members of
+staff share one credential. The limitations are real and worth stating — no
+per-person audit trail, no way to revoke one person's access without changing the
+password for everyone, and the secret travels in a header, so it depends on HTTPS
+in front of the app. For an organisation this size those were acceptable trades
+against maintaining a users table that serves neither feature domain.
 
 ## Tests
 
