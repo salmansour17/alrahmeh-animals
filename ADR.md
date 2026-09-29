@@ -35,6 +35,40 @@ no query behaviour I cannot account for. Flask returns JSON only; the user
 interface is a React bundle that this same process serves as static files, a
 split agreed with the course instructor and recorded in the README.
 
+## 2. Each domain is a self-contained package that never imports the other
+
+Date: 2026-09-29
+Status: Decided
+
+Context: Animal intake and the donation ledger have to become separate services
+in a later assignment, but the deployment contract requires one process now.
+The two genuinely touch: a donor can earmark a gift for one animal's treatment,
+so the ledger needs to know that an animal id is real.
+
+Decision: `domains/animals/` and `domains/donations/` each own their own
+models, repository, service and Flask blueprint, and neither imports anything
+from the other; they refer to each other only by primary-key value. When the
+ledger needs to check an animal id, it will declare the small interface it
+needs in its own package, and `create_app` (the only module that imports both)
+will adapt the animal service to it. `tests/test_domain_boundary.py` reads
+every source file in both packages and fails if either imports its sibling.
+
+Alternatives considered: A layered layout (one `models.py`, one
+`repositories.py`, one `routes.py` for the whole app) was rejected because the
+seam would then run through the middle of every file, and splitting the
+services later would mean pulling each file apart line by line. Letting the
+donations service import `AnimalService` directly was rejected because it is
+the one line that would make the ledger impossible to deploy without the
+animal code beside it. Splitting into two processes now is ruled out by the
+single-container contract (§1c).
+
+Consequences: Splitting the domains later means moving a folder and replacing
+one adapter in `create_app` with an HTTP call, and the boundary test proves
+that nothing else needs to change. The cost is a little duplication — each
+blueprint has its own error handlers — and shared infrastructure
+(`db/connection.py`, `security.py`) that each future service would need its own
+copy of.
+
 ## 3. Cross-domain references are soft; money is stored in minor units
 
 Date: 2026-09-28
