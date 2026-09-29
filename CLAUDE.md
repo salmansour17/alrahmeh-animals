@@ -37,15 +37,57 @@ rule in section 1a — the mitigation is that `static/dist` is committed, so Nod
 is a build-time tool only and is never needed to run the app. Never create a
 manifest inside a subfolder.
 
-**Stripe is out of scope.** Do not build payment processing. It is ADR-5, the
-"thing I deliberately chose not to build."
-
 **Auth: one shared admin password**, read from `ADMIN_PASSWORD` and checked by
 `require_admin` in `security.py`. No users table, no sessions, no password
 hashing — one shared secret is all this organisation needs, and it keeps ADR-1's
 "no user accounts" reasoning literally true. Unset means the staff endpoints fail
-closed with 503; never add a default password. Every write endpoint in either
-domain gets `@require_admin`.
+closed with 503; never add a default password. Per-staff accounts are ADR-5, the
+"thing I deliberately chose not to build."
+
+Every write endpoint in either domain gets `@require_admin`, with exactly two
+exceptions, both in the Stripe payment flow: `POST /api/donations/checkout` is
+public because donors are not staff; it validates the amount against
+server-side bounds and writes nothing to the ledger. `POST
+/api/donations/stripe/webhook` is authenticated by verifying the
+`Stripe-Signature` header against `STRIPE_WEBHOOK_SECRET` over the raw request
+body, and answers 400 to anything that fails. No other write endpoint may be
+unauthenticated.
+
+## Payments (Stripe)
+
+Added 2026-09-29 at my professor's request, to demonstrate Adapter and
+Dependency Inversion on a real external integration. It reverses the earlier
+"Stripe is out of scope" decision. Built on its own branch,
+`feat/stripe-donations`, after the donations ledger exists — never before.
+
+- **Test mode only.** `STRIPE_SECRET_KEY` and `STRIPE_WEBHOOK_SECRET` come from
+  the environment. Unset means the payment endpoints fail closed with 503, the
+  same philosophy as `ADMIN_PASSWORD`; the rest of the site keeps working.
+- **A key starting `sk_live_` refuses to charge**: the payment endpoints answer
+  503 and log why. The app still boots — refusing to start would let a payment
+  misconfiguration take the animal pages and counters down with it, which is the
+  same unattended-deployment reasoning as the `PORT` fallback.
+- **Never commit keys, never log them**, never echo them in a response.
+- **Stripe Checkout (redirect)** only, so there is no frontend npm dependency.
+  `stripe` is the only new package.
+- **Shape:** Stripe lives inside `domains/donations/` behind a
+  `PaymentGateway` interface (Adapter pattern, Dependency Inversion). The
+  donations service depends on the interface; a Stripe adapter and a fake
+  adapter for tests both implement it, and `create_app` chooses which.
+- **The ledger stays append-only and server-authoritative.** A card donation row
+  is written ONLY by the verified `checkout.session.completed` webhook — never
+  from the browser redirect, never from a client-supplied amount. The amount
+  recorded is the one in the verified Stripe event. Replayed webhooks must not
+  double-count: idempotency comes from a UNIQUE Stripe session id.
+- **Open schema question for that branch:** where the session id lives. Adding a
+  column to `donations` would not reach an existing database, because
+  `CREATE TABLE IF NOT EXISTS` never alters a table, and a migration step is
+  forbidden. A separate table that creates itself on boot avoids that. Either
+  way it changes what ADR-3 describes — stop and ask before editing
+  `schema.sql`.
+- Stripe may not onboard businesses based in Jordan; the real handover may need
+  a local provider behind the same `PaymentGateway`. That is part of the Adapter
+  argument, not a reason to skip it.
 
 ## Hard constraints — never violate these
 
@@ -62,7 +104,8 @@ domain gets `@require_admin`.
   `.github/workflows/`, or any Terraform/Bicep/ARM file. These are explicitly
   forbidden and would cost me marks.
 - No Redis, RabbitMQ, Celery, cron, or any external database, cache or queue.
-- Keep declared dependencies under 12 across both manifests. Currently 8.
+- Keep declared dependencies under 12 across both manifests. Currently 8
+  planned; `stripe` makes it 9.
 - Keep the file count between 15 and 50, excluding lockfiles, `.venv` and
   `node_modules`. Don't split every button into its own component file.
 
@@ -83,7 +126,9 @@ afterthought.
 **2. Donation and impact ledger** (`domains/donations/`)
 Append-only donation records against a purpose: medical fund, food fund, or
 general. Impact statistics derived from the ledger, which is what the homepage
-counters read from.
+counters read from. Rows arrive two ways: staff record cash and bank-transfer
+donations through a `@require_admin` endpoint, and card donations are written
+by the verified Stripe webhook (see Payments).
 
 ## Repository layout
 
@@ -96,6 +141,7 @@ db/               schema.sql, connection.py
 domains/
   animals/        models.py repository.py service.py routes.py
   donations/      models.py repository.py service.py routes.py
+                  payments.py  (PaymentGateway + Stripe and fake adapters)
 frontend/src/     main.jsx App.jsx api.js pages/ components/ styles.css
 static/dist/      committed build output
 tests/            conftest.py test_animals_service.py test_donations_service.py
@@ -156,7 +202,8 @@ These are 30% of the grade, more than the working features.
 Consequences. Entries must land across at least 3 different commit dates, as the
 decisions are actually made. The five are: (1) backend framework, (2) how the
 domains stay independently modularizable, (3) the SQLite schema decision, (4)
-testing approach and what I left thin, (5) what I chose not to build.
+testing approach and what I left thin, (5) what I chose not to build:
+per-staff user accounts, in favour of one shared `ADMIN_PASSWORD`.
 
 **`AI_USAGE.md`** — add a row every session. Fill in the date, tool, my actual
 prompt, disposition, and what changed. **Leave the last column to me.** That
@@ -164,11 +211,13 @@ column is "in my own words, how this works", and it is the one thing I cannot
 outsource — mark it `⚠️ TODO (me)` with a specific question I need to answer, and
 remind me it's outstanding. Never write it for me.
 
-**Do not commit `AI_USAGE.md`.** Keep updating the file on disk, but never
-include it in a `git add` command you hand me. It stays untracked until I have
-written all of my own explanations, and then I commit it once, at the end. Never
-tell me to run `git add .` or `git add -A` — always name the files explicitly, so
-this file can't be swept in by accident.
+**`AI_USAGE.md` gets its own commit, at the end of each session.** The file is
+already tracked. Never include it in a feature branch's `git add` commands.
+When a session's work is merged, I write my own-words column for that session,
+and then you hand me a separate commit for `AI_USAGE.md` alone, on its own
+`docs/` branch merged by pull request like everything else. Never tell me to run
+`git add .` or `git add -A` — always name the files explicitly, so this file
+can't be swept in by accident.
 
 **Tests** — at least 70% coverage on the business logic of both domains,
 measured with:
@@ -200,13 +249,13 @@ calendar days, no single day over 40% of the total, pushed to
 | Date | Branch | Lands |
 |---|---|---|
 | Sep 28 | `chore/project-scaffold`, `feat/sqlite-persistence` | scaffold, ADR-1, schema, connection layer, ADR-3 |
-| Sep 29 | `feat/animal-intake-adoption` | entity, repository, guarded transitions, tests, ADR-2 |
+| Sep 29 | `feat/admin-auth`, `chore/stripe-scope`, `feat/animal-intake-adoption` | shared admin password, Stripe scope change, entity, repository, guarded transitions, tests, ADR-2 |
 | Sep 30 | `feat/donation-impact-ledger` | ledger, impact stats, tests, coverage run, ADR-4 |
-| Oct 1 | `feat/react-frontend` | Vite at root, api client, router, animal pages |
-| Oct 2 | same branch | homepage counters, donate page, bilingual header, committed build |
-| Oct 3 | `docs/report-and-final-adrs` | ADR-5, architecture and schema diagrams, 4-5 page report |
+| Oct 1 | `feat/stripe-donations`, then `feat/react-frontend` | PaymentGateway + Stripe and fake adapters, checkout and verified webhook, idempotency, tests; then Vite at root, api client, router, animal pages |
+| Oct 2 | `feat/react-frontend` | homepage counters, donate page (redirects to Stripe Checkout), bilingual header, committed build |
+| Oct 3 | `docs/report-and-final-adrs` | ADR-5 (per-staff accounts), architecture and schema diagrams, 4-5 page report |
 | Oct 4 | `chore/deployment-contract-check` | clean-clone verification, final README numbers |
 
 If I fall behind, protect in this order: working domains and their tests first,
-then the process documents, then the frontend. A thin frontend with honest ADRs
-beats a polished one without them.
+then the process documents, then Stripe, then the frontend. A thin frontend with
+honest ADRs beats a polished one without them.
