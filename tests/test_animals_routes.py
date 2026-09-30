@@ -101,3 +101,9 @@ def test_non_json_body_is_a_validation_error_not_a_crash(client):
         "/api/animals", data="name=Zaytoon", content_type="text/plain", headers=STAFF
     )
     assert response.status_code == 400
+
+
+def test_placement_stats_are_public(client):
+    response = client.get("/api/animals/stats")
+    assert response.status_code == 200
+    assert response.get_json() == {"available": 0, "fostering": 0, "pending": 0, "adopted": 0}

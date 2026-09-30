@@ -35,6 +35,11 @@ def create_animals_blueprint(service: AnimalService) -> Blueprint:
         animals = service.list_animals(request.args.get("status"))
         return jsonify(animals=[_public(animal) for animal in animals])
 
+    @bp.get("/stats")
+    def placement_stats():
+        counts = service.placement_counts()
+        return jsonify({status.value: count for status, count in counts.items()})
+
     @bp.get("/<int:animal_id>")
     def get_animal(animal_id: int):
         animal = service.get(animal_id)

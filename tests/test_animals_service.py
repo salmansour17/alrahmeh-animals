@@ -308,3 +308,21 @@ def _new_animal() -> NewAnimal:
 
 def _literal(text: str) -> str:
     return re.escape(text)
+
+
+# --- placement counts --------------------------------------------------------
+
+
+def test_placement_counts_include_every_status_even_when_zero(service):
+    assert service.placement_counts() == {status: 0 for status in S}
+
+    _animal_in(service, S.AVAILABLE)
+    _animal_in(service, S.ADOPTED)
+    _animal_in(service, S.ADOPTED)
+
+    assert service.placement_counts() == {
+        S.AVAILABLE: 1,
+        S.FOSTERING: 0,
+        S.PENDING: 0,
+        S.ADOPTED: 2,
+    }
