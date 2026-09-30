@@ -87,8 +87,14 @@ CREATE INDEX IF NOT EXISTS idx_status_changes_animal ON status_changes (animal_i
 -- ===========================================================================
 
 -- Append-only ledger. Nothing in the application updates or deletes a row
--- here: a correction is a new compensating row, which is what makes the
--- homepage impact figures reproducible from the table alone.
+-- here, which is what makes the homepage impact figures reproducible from the
+-- table alone, and the two triggers below make SQLite itself refuse to. Mistakes
+-- are not yet correctable: CHECK (amount_fils > 0) rules out a negative
+-- compensating row, so a correction mechanism is a known gap (ADR-4).
+--
+-- received_at holds an ISO date (2026-09-30) that the application always
+-- supplies: staff record cash days after it arrives, so the date is chosen,
+-- not stamped. The datetime('now') default is a backstop that is never used.
 --
 -- Money is stored as an INTEGER count of fils, the minor unit of the Jordanian
 -- dinar (1 JOD = 1000 fils). Storing currency as a REAL would accumulate
@@ -111,3 +117,15 @@ CREATE TABLE IF NOT EXISTS donations (
 
 CREATE INDEX IF NOT EXISTS idx_donations_purpose ON donations (purpose);
 CREATE INDEX IF NOT EXISTS idx_donations_received_at ON donations (received_at);
+
+-- Append-only, enforced by the database rather than promised by the code. Like
+-- the tables, these create themselves on an existing database at boot.
+CREATE TRIGGER IF NOT EXISTS donations_no_update BEFORE UPDATE ON donations
+BEGIN
+    SELECT RAISE(ABORT, 'donations are append-only');
+END;
+
+CREATE TRIGGER IF NOT EXISTS donations_no_delete BEFORE DELETE ON donations
+BEGIN
+    SELECT RAISE(ABORT, 'donations are append-only');
+END;
