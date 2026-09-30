@@ -76,6 +76,15 @@ class SqliteAnimalRepository:
                 ).fetchall()
         return [_to_animal(row) for row in rows]
 
+    def count_by_status(self) -> dict[PlacementStatus, int]:
+        """How many animals are in each status. Statuses with no animals are
+        simply absent here; the service fills them in."""
+        with self._database.unit_of_work() as connection:
+            rows = connection.execute(
+                "SELECT status, COUNT(*) AS animals FROM animals GROUP BY status"
+            ).fetchall()
+        return {PlacementStatus(row["status"]): row["animals"] for row in rows}
+
     def change_status(
         self,
         animal_id: int,

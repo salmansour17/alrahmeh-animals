@@ -67,6 +67,8 @@ class AnimalRepository(Protocol):
 
     def list(self, status: PlacementStatus | None) -> list[Animal]: ...
 
+    def count_by_status(self) -> dict[PlacementStatus, int]: ...
+
     def change_status(
         self, animal_id: int, expected: PlacementStatus, new: PlacementStatus, reason: str | None
     ) -> bool: ...
@@ -88,11 +90,9 @@ def check_transition(current: PlacementStatus, requested: PlacementStatus) -> No
 
 
 class AnimalService:
-    def __init__(
-        self, repository: AnimalRepository, today: Callable[[], date] = date.today
-    ) -> None:
-        # `today` is injected so tests can pin the date that "no intake date in
-        # the future" is checked against, instead of depending on the clock.
+    def __init__(self, repository: AnimalRepository, today: Callable[[], date]) -> None:
+        # `today` is injected, with no default, so the caller decides which
+        # calendar it is (create_app passes Amman's) and tests can pin it.
         self._repository = repository
         self._today = today
 
@@ -101,6 +101,12 @@ class AnimalService:
 
     def list_animals(self, status: str | None = None) -> list[Animal]:
         return self._repository.list(parse_status(status))
+
+    def placement_counts(self) -> dict[PlacementStatus, int]:
+        """Animals per status, every status present. The homepage's "found
+        homes" figure is the ADOPTED count, read live rather than typed in."""
+        counts = self._repository.count_by_status()
+        return {status: counts.get(status, 0) for status in PlacementStatus}
 
     def get(self, animal_id: int) -> Animal:
         animal = self._repository.get(animal_id)
