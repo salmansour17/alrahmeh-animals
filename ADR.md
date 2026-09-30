@@ -103,3 +103,39 @@ and `placement_requests` do declare real foreign keys with ON DELETE CASCADE,
 because those relationships never cross a domain boundary and deleting an animal
 genuinely should remove its history. Amounts must be converted at the
 presentation edge, since 25000 fils has to display as 25.000 JOD.
+
+## 4. Test the rules against real SQLite, exhaustively where the domain is small
+
+Date: 2026-09-30
+Status: Decided
+
+Context: Section 4 asks for 70% coverage of the business logic of both domains,
+and the parts most likely to be wrong are the ones a coverage figure cannot see:
+a transition table with one wrong entry, a money parser that accepts a string it
+should not, a total that disagrees with its own breakdown. Each test also has to
+be something I can explain, so a large mocking layer counts against it.
+
+Decision: Tests call each domain's service against the real SQLite repository on
+a temporary database, and enumerate the whole input space wherever it is small:
+all 16 status pairs, each malformed amount string I could think of (including
+Arabic-Indic digits and a trailing newline), and both sides of the 10,000 JOD
+limit. The only fakes are at the seams the domains declare: a two-line
+`FakeAnimalDirectory`, and the `StaleRead` wrapper that simulates a lost race.
+Append-only is tested twice: the repository has no mutating method, and a raw
+UPDATE or DELETE is refused by SQLite's triggers.
+
+Alternatives considered: Mocking the repository in every service test was
+rejected because the mock would only repeat my assumptions about the SQL —
+exactly the part most likely to be wrong, such as an empty SUM returning NULL
+instead of 0. Counting route handlers towards the 70% was rejected because
+Flask glue is easy to cover and says nothing about the rules; `.coveragerc`
+leaves `routes.py` out, and a smaller set of HTTP tests checks only access
+control, status codes and what the public can see.
+
+Consequences: Business-logic coverage is 100% (provisional, 2026-09-30), but
+several things are deliberately thin: the concurrency guarantee is shown with a
+simulated stale read, not real threads; there are no frontend tests yet; Stripe
+will only ever be exercised through the fake payment adapter, never the real
+API; and the ledger has no corrections or reversals to test, because
+`CHECK (amount_fils > 0)` rules out a negative compensating row. A mistaken
+donation cannot currently be undone, which is a known gap.
