@@ -101,7 +101,50 @@ Coverage is measured against `domains/` and excludes Flask blueprints
 (`routes.py`), which are routing glue rather than business logic. The
 configuration lives in `.coveragerc`.
 
-Current coverage: _to be reported once both domains are implemented._
+Current coverage (provisional, measured 2026-09-30; final figure on 2026-10-04):
+
+```
+Name                              Stmts   Miss  Cover
+-----------------------------------------------------
+domains/animals/models.py           114      0   100%
+domains/animals/repository.py        53      0   100%
+domains/animals/service.py           54      0   100%
+domains/donations/models.py         120      0   100%
+domains/donations/repository.py      30      0   100%
+domains/donations/service.py         32      0   100%
+-----------------------------------------------------
+TOTAL                               403      0   100%
+
+160 passed
+```
+
+100% line coverage says every line ran, not that every case is covered; ADR-4
+records what the tests deliberately leave thin.
+
+## API
+
+| Endpoint | Access | Purpose |
+|---|---|---|
+| `GET /api/animals` | public | List animals (`?status=` to filter) |
+| `GET /api/animals/<id>` | public | One animal, with vaccinations only |
+| `GET /api/animals/stats` | public | Animals per placement status (homepage "found homes") |
+| `GET /api/animals/<id>/staff` | staff | Full record: notes, medical history, status history |
+| `POST /api/animals` | staff | Admit an animal |
+| `POST /api/animals/<id>/transitions` | staff | Move through the placement lifecycle |
+| `POST /api/animals/<id>/medical-records` | staff | Add a medical record |
+| `GET /api/donations/impact` | public | Homepage totals, aggregates only |
+| `GET /api/donations` | staff | Donations, newest first (`?limit=`, max 200, `?offset=`) |
+| `GET /api/donations/<id>` | staff | One donation |
+| `POST /api/donations` | staff | Record a cash or bank-transfer donation |
+
+Amounts are sent as a string of Jordanian dinars, `"amount_jod": "25.500"`,
+never as a JSON number, and come back both as `amount_fils` (an integer) and as
+that string. Donations cannot be edited or deleted: those requests answer 405,
+and the database refuses them too.
+
+**Frontend rule:** donor names, animal names and notes are user-supplied text.
+They are rendered only through React's normal escaping; `dangerouslySetInnerHTML`
+is banned in this codebase.
 
 ## Project documents
 
