@@ -10,6 +10,7 @@ separate web server, worker or build step at runtime.
 from __future__ import annotations
 
 import logging
+from datetime import date, datetime, timedelta, timezone
 
 from flask import Flask, jsonify
 from werkzeug.exceptions import HTTPException
@@ -18,11 +19,45 @@ from config import Config, load_config
 from db.connection import Database
 from domains.animals.repository import SqliteAnimalRepository
 from domains.animals.routes import create_animals_blueprint
-from domains.animals.service import AnimalService
+from domains.animals.service import AnimalNotFound, AnimalService
+from domains.donations.repository import SqliteDonationRepository
+from domains.donations.routes import create_donations_blueprint
+from domains.donations.service import DonationService
 from security import require_admin
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger(__name__)
+
+# Jordan has kept UTC+3 all year since abolishing daylight saving in 2022, so a
+# fixed offset is exact, and avoids zoneinfo, which on Windows needs the extra
+# tzdata package to know about Asia/Amman.
+AMMAN = timezone(timedelta(hours=3), "Asia/Amman")
+
+
+def amman_today() -> date:
+    """The date in Jordan, whatever time zone the server runs in. A donation
+    recorded at 01:00 in Amman is dated that day, not the UTC day before."""
+    return datetime.now(AMMAN).date()
+
+
+class AnimalDirectoryAdapter:
+    """Adapter: lets the donations domain ask "does this animal exist?"
+    through its own one-method AnimalDirectory interface, answered by the animal
+    domain's AnimalService.
+
+    It lives here, at the composition root, because this is the only module
+    allowed to import both domains. Neither package knows the other exists.
+    """
+
+    def __init__(self, animals: AnimalService) -> None:
+        self._animals = animals
+
+    def exists(self, animal_id: int) -> bool:
+        try:
+            self._animals.get(animal_id)
+        except AnimalNotFound:
+            return False
+        return True
 
 
 def create_app(config: Config | None = None) -> Flask:
@@ -45,11 +80,19 @@ def create_app(config: Config | None = None) -> Flask:
     database.initialise()
     app.config["DATABASE"] = database
 
-    # Each domain gets its concrete repository here and nowhere else. The
-    # service only knows the AnimalRepository Protocol, so swapping SQLite for
-    # something else would be a change to these lines alone.
-    animal_service = AnimalService(SqliteAnimalRepository(database))
+    # Each domain gets its concrete repository here and nowhere else. Each
+    # service only knows the Protocols it declares, so swapping SQLite, or
+    # replacing the adapter with an HTTP call once the domains are separate
+    # services, would be a change to these lines alone.
+    animal_service = AnimalService(SqliteAnimalRepository(database), today=amman_today)
     app.register_blueprint(create_animals_blueprint(animal_service))
+
+    donation_service = DonationService(
+        SqliteDonationRepository(database),
+        animals=AnimalDirectoryAdapter(animal_service),
+        today=amman_today,
+    )
+    app.register_blueprint(create_donations_blueprint(donation_service))
 
     app.register_error_handler(HTTPException, _json_http_error)
     _register_meta_routes(app)
