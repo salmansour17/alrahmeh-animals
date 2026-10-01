@@ -35,6 +35,12 @@ _AMOUNT_JOD = re.compile(
 )
 
 DONOR_NAME_MAX = 120
+
+# Smallest card donation. The test-mode Stripe account settles in EUR and
+# refuses any charge worth less than EUR 0.50 (confirmed 2026-10-01: "must
+# convert to at least 50 cents"). 0.500 JOD is about USD 0.71, a margin that
+# survives normal EUR/USD movement while staying a round figure for donors.
+MIN_CHECKOUT_FILS = 500
 DEFAULT_PAGE_SIZE = 50
 MAX_PAGE_SIZE = 200
 
@@ -87,6 +93,72 @@ class NewDonation:
             earmarked_animal_id=_optional_positive_int(fields, "earmarked_animal_id"),
             received_on=today if received is None else _past_date(fields, "received_on", today),
         )
+
+
+@dataclass(frozen=True)
+class CheckoutRequest:
+    """A donor asking to pay by card. Validated with the same helpers as a
+    staff-recorded donation, plus the provider's own limits. There is no
+    received_on: a card payment is dated by the provider when it happens."""
+
+    amount_fils: int
+    purpose: DonationPurpose
+    earmarked_animal_id: int | None
+    donor_name: str | None
+
+    @classmethod
+    def from_payload(cls, payload: Any) -> CheckoutRequest:
+        fields = _fields(
+            payload,
+            required={"amount_jod", "purpose"},
+            optional={"donor_name", "earmarked_animal_id"},
+        )
+        amount_fils = parse_amount_jod(fields["amount_jod"])
+        if amount_fils < MIN_CHECKOUT_FILS:
+            raise ValidationError(f"card donations must be at least {format_jod(MIN_CHECKOUT_FILS)} JOD")
+        return cls(
+            amount_fils=amount_fils,
+            purpose=_enum(fields, "purpose", DonationPurpose),
+            earmarked_animal_id=_optional_positive_int(fields, "earmarked_animal_id"),
+            donor_name=_optional_text(fields, "donor_name", DONOR_NAME_MAX),
+        )
+
+
+@dataclass(frozen=True)
+class CheckoutSession:
+    """What the donor's browser needs: where to go to pay."""
+
+    id: str
+    url: str
+
+
+@dataclass(frozen=True)
+class ProviderCharge:
+    """What the payment provider actually charged, in its own currency and
+    minor unit (US cents for Stripe in test mode). Kept beside the ledger row
+    as the audit trail for the conversion into fils."""
+
+    session_id: str
+    amount_minor: int
+    currency: str
+
+
+@dataclass(frozen=True)
+class PaymentConfirmed:
+    """A payment the provider has confirmed, in our own terms. Built only from
+    a verified provider message.
+
+    amount_fils is the charge expressed in JOD fils by the gateway, or None if
+    the gateway could not express it (an unexpected currency). Purpose stays a
+    string: it is checked by the service like any other input, not trusted
+    because it came back."""
+
+    charge: ProviderCharge
+    amount_fils: int | None
+    purpose: str | None
+    earmarked_animal_id: int | None
+    donor_name: str | None
+    paid_on: date
 
 
 @dataclass(frozen=True)

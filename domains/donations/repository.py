@@ -18,7 +18,12 @@ from domains.donations.models import (
     ImpactSummary,
     NewDonation,
     PageRequest,
+    ProviderCharge,
 )
+
+
+class _AlreadyRecorded(Exception):
+    """Raised inside a transaction to roll it back; never leaves this module."""
 
 
 class SqliteDonationRepository:
@@ -29,19 +34,7 @@ class SqliteDonationRepository:
 
     def add(self, donation: NewDonation) -> Donation:
         with self._database.unit_of_work() as connection:
-            cursor = connection.execute(
-                "INSERT INTO donations "
-                "(donor_name, amount_fils, purpose, earmarked_animal_id, received_at) "
-                "VALUES (?, ?, ?, ?, ?)",
-                (
-                    donation.donor_name,
-                    donation.amount_fils,
-                    donation.purpose.value,
-                    donation.earmarked_animal_id,
-                    donation.received_on.isoformat(),
-                ),
-            )
-            new_id = cursor.lastrowid
+            new_id = _insert_donation(connection, donation)
         return Donation(
             id=new_id,
             donor_name=donation.donor_name,
@@ -50,6 +43,31 @@ class SqliteDonationRepository:
             earmarked_animal_id=donation.earmarked_animal_id,
             received_on=donation.received_on,
         )
+
+    def add_paid(self, donation: NewDonation, charge: ProviderCharge) -> Donation | None:
+        """Record a card donation and the provider charge behind it together,
+        or neither.
+
+        Returns None if this session was already recorded. The check is the
+        database's UNIQUE constraint, not a SELECT beforehand: a SELECT-then-
+        INSERT would let two deliveries of the same webhook both see "not
+        recorded yet" and both insert.
+        """
+        try:
+            with self._database.unit_of_work() as connection:
+                donation_id = _insert_donation(connection, donation)
+                payment = connection.execute(
+                    "INSERT INTO stripe_payments "
+                    "(session_id, donation_id, charged_amount_minor, charged_currency) "
+                    "VALUES (?, ?, ?, ?) ON CONFLICT (session_id) DO NOTHING",
+                    (charge.session_id, donation_id, charge.amount_minor, charge.currency),
+                )
+                if payment.rowcount == 0:
+                    # Undo the donation insert above: unit_of_work rolls back.
+                    raise _AlreadyRecorded
+        except _AlreadyRecorded:
+            return None
+        return self.get(donation_id)
 
     def get(self, donation_id: int) -> Donation | None:
         with self._database.unit_of_work() as connection:
@@ -97,6 +115,24 @@ class SqliteDonationRepository:
             totals_by_purpose_fils={purpose: found.get(purpose, 0) for purpose in DonationPurpose},
             animals_helped=headline["animals_helped"],
         )
+
+
+def _insert_donation(connection: Any, donation: NewDonation) -> int:
+    """The one INSERT into the ledger, shared by staff-recorded and card
+    donations so the two can never write rows differently."""
+    cursor = connection.execute(
+        "INSERT INTO donations "
+        "(donor_name, amount_fils, purpose, earmarked_animal_id, received_at) "
+        "VALUES (?, ?, ?, ?, ?)",
+        (
+            donation.donor_name,
+            donation.amount_fils,
+            donation.purpose.value,
+            donation.earmarked_animal_id,
+            donation.received_on.isoformat(),
+        ),
+    )
+    return cursor.lastrowid
 
 
 def _to_donation(row: Any) -> Donation:
