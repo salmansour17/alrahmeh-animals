@@ -1,0 +1,21 @@
+{
+  "name": "alrahmeh-frontend",
+  "private": true,
+  "version": "1.0.0",
+  "description": "React frontend for the Al-Rahmeh Association for Animals site. Built into static/dist, which Flask serves; Node is needed only to change the frontend, never to run the app.",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build"
+  },
+  "dependencies": {
+    "@fontsource/nunito": "5.3.0",
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
+    "react-router-dom": "7.18.4"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "6.1.1",
+    "vite": "8.3.2"
+  }
+}
