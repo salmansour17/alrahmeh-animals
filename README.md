@@ -64,6 +64,9 @@ default. No `.env` file is required.
 | `DATA_DIR` | `./data` | Directory holding the SQLite file. Created on startup if absent. |
 | `FLASK_DEBUG` | `0` | Set to `1` for the Flask reloader and tracebacks. Leave unset in deployment. |
 | `ADMIN_PASSWORD` | _(unset)_ | Shared password for the staff-only endpoints. **Unset disables them**, returning 503 rather than allowing access. |
+| `STRIPE_SECRET_KEY` | _(unset)_ | Stripe **test-mode** secret key (`sk_test_…`). Unset, or a live `sk_live_…` key, disables card donations (503); the rest of the site keeps working. |
+| `STRIPE_WEBHOOK_SECRET` | _(unset)_ | Signing secret (`whsec_…`) used to verify that webhook calls really come from Stripe. Unset disables card donations. |
+| `PUBLIC_BASE_URL` | `http://localhost:8000` | The site's own origin, e.g. `https://donate.example.org`. Donors return here after paying. Must be a bare `http(s)://host[:port]`; anything else disables card donations. |
 
 The SQLite database lives at **`${DATA_DIR}/alrahmeh.db`**.
 

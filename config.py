@@ -10,8 +10,9 @@ from __future__ import annotations
 
 import logging
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
+from urllib.parse import urlsplit
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +23,9 @@ BIND_HOST = "0.0.0.0"
 DEFAULT_PORT = 8000
 DEFAULT_DATA_DIR = "data"
 DATABASE_FILENAME = "alrahmeh.db"
+# Where donors are sent back to after Stripe Checkout. Local development
+# default; a deployment sets PUBLIC_BASE_URL to its real address.
+DEFAULT_PUBLIC_BASE_URL = "http://localhost:8000"
 
 
 @dataclass(frozen=True)
@@ -32,10 +36,19 @@ class Config:
     port: int
     data_dir: Path
     debug: bool
+    # Secrets are excluded from repr, so printing or logging a Config (or a test
+    # failure that shows one) can never reveal them.
+    #
     # One shared secret for the staff-only endpoints. None means admin access is
     # switched off entirely; see security.require_admin for why that is the
     # default rather than a built-in password.
-    admin_password: str | None = None
+    admin_password: str | None = field(default=None, repr=False)
+    # Stripe. None for either secret means the payment endpoints answer 503.
+    stripe_secret_key: str | None = field(default=None, repr=False)
+    stripe_webhook_secret: str | None = field(default=None, repr=False)
+    # None when PUBLIC_BASE_URL was set but invalid: payments are then disabled
+    # rather than sending donors somewhere unintended.
+    public_base_url: str | None = DEFAULT_PUBLIC_BASE_URL
 
     @property
     def database_path(self) -> Path:
@@ -53,7 +66,37 @@ def load_config() -> Config:
         # Deliberately no default: an unset ADMIN_PASSWORD disables the staff
         # endpoints rather than falling back to a value an attacker could guess.
         admin_password=os.environ.get("ADMIN_PASSWORD") or None,
+        stripe_secret_key=os.environ.get("STRIPE_SECRET_KEY") or None,
+        stripe_webhook_secret=os.environ.get("STRIPE_WEBHOOK_SECRET") or None,
+        public_base_url=_read_public_base_url(),
     )
+
+
+def _read_public_base_url() -> str | None:
+    """Parse PUBLIC_BASE_URL: http(s), a host, and nothing else.
+
+    Stripe sends donors back to this address after they pay, so it must be
+    exactly the site's own origin. A path, query, fragment or user@ prefix is
+    rejected rather than tidied up. Unlike a bad PORT this does not fall back to
+    the default: falling back to localhost would strand every donor on a dead
+    page after paying, so an invalid value disables payments (None) instead.
+    """
+    raw = os.environ.get("PUBLIC_BASE_URL", "").strip()
+    if not raw:
+        return DEFAULT_PUBLIC_BASE_URL
+    candidate = raw.removesuffix("/")
+    parts = urlsplit(candidate)
+    if (
+        parts.scheme not in ("http", "https")
+        or not parts.hostname
+        or "@" in parts.netloc
+        or parts.path
+        or parts.query
+        or parts.fragment
+    ):
+        logger.warning("PUBLIC_BASE_URL=%r is not a plain http(s) origin; payments disabled", raw)
+        return None
+    return candidate
 
 
 def _read_port() -> int:

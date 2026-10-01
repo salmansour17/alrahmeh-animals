@@ -18,7 +18,11 @@ from db.connection import SCHEMA_PATH
 from domains.donations.models import (
     FILS_PER_JOD,
     MAX_DONATION_FILS,
+    CheckoutRequest,
+    CheckoutSession,
     DonationPurpose,
+    PaymentConfirmed,
+    ProviderCharge,
     ValidationError,
     format_jod,
     parse_amount_jod,
@@ -27,7 +31,10 @@ from domains.donations.repository import SqliteDonationRepository
 from domains.donations.service import (
     DonationNotFound,
     DonationService,
+    InvalidWebhookSignature,
+    PaymentsUnavailable,
     UnknownEarmarkedAnimal,
+    WebhookOutcome,
 )
 
 P = DonationPurpose
@@ -267,3 +274,166 @@ def test_list_is_newest_first_and_paginated(service):
 def test_bad_pagination_is_rejected(service, limit, offset, complaint):
     with pytest.raises(ValidationError, match=complaint):
         service.list_donations(limit=limit, offset=offset)
+
+
+# --- card payments through a gateway -----------------------------------------
+
+
+class FakeGateway:
+    """Stands in for StripeGateway: same types in, same types out, same
+    exceptions. It treats the payload as the event itself and the signature
+    as valid only if it is the word "valid"."""
+
+    def __init__(self) -> None:
+        self.checkouts: list[CheckoutRequest] = []
+
+    def create_checkout(self, request: CheckoutRequest) -> CheckoutSession:
+        self.checkouts.append(request)
+        return CheckoutSession(id=f"cs_fake_{len(self.checkouts)}", url="https://pay.example/fake")
+
+    def verify_event(self, payload, signature):
+        if signature != "valid":
+            raise InvalidWebhookSignature("fake gateway: bad signature")
+        return payload
+
+
+def _paid(**overrides) -> PaymentConfirmed:
+    fields = dict(
+        charge=ProviderCharge(session_id="cs_fake_1", amount_minor=3_597, currency="usd"),
+        amount_fils=25_500,
+        purpose="medical_fund",
+        earmarked_animal_id=None,
+        donor_name=None,
+        paid_on=TODAY,
+    )
+    return PaymentConfirmed(**{**fields, **overrides})
+
+
+@pytest.fixture
+def gateway() -> FakeGateway:
+    return FakeGateway()
+
+
+@pytest.fixture
+def paying_service(repository, gateway) -> DonationService:
+    return DonationService(
+        repository, FakeAnimalDirectory({KNOWN_ANIMAL}), today=lambda: TODAY, gateway=gateway
+    )
+
+
+def test_checkout_asks_the_gateway_and_writes_nothing(paying_service, gateway):
+    session = paying_service.start_checkout({"amount_jod": "25.500", "purpose": "food_fund", "donor_name": "Um Khaled"})
+
+    assert session.url == "https://pay.example/fake"
+    assert gateway.checkouts == [
+        CheckoutRequest(amount_fils=25_500, purpose=P.FOOD_FUND, earmarked_animal_id=None, donor_name="Um Khaled")
+    ]
+    assert paying_service.impact().donation_count == 0
+
+
+@pytest.mark.parametrize(
+    ("payload", "complaint"),
+    [
+        ({"amount_jod": "0.499", "purpose": "general"}, "at least 0.500"),
+        ({"amount_jod": 25.5, "purpose": "general"}, "must be a string"),
+        ({"amount_jod": "10000.010", "purpose": "general"}, "at most 10000"),
+        ({"amount_jod": "5", "purpose": "general", "received_on": "2026-09-30"}, "unknown field(s): received_on"),
+        ({"amount_jod": "5", "purpose": "general", "currency": "usd"}, "unknown field(s): currency"),
+    ],
+)
+def test_invalid_checkout_never_reaches_the_gateway(paying_service, gateway, payload, complaint):
+    with pytest.raises(ValidationError, match=re.escape(complaint)):
+        paying_service.start_checkout(payload)
+    assert gateway.checkouts == []
+
+
+def test_checkout_accepts_any_fils_amount_at_or_above_the_minimum(paying_service, gateway):
+    paying_service.start_checkout({"amount_jod": "0.500", "purpose": "general"})
+    paying_service.start_checkout({"amount_jod": "25.505", "purpose": "general"})
+    assert [c.amount_fils for c in gateway.checkouts] == [500, 25_505]
+
+
+def test_checkout_for_a_missing_animal_is_refused_before_payment(paying_service, gateway):
+    with pytest.raises(UnknownEarmarkedAnimal):
+        paying_service.start_checkout({"amount_jod": "5", "purpose": "medical_fund", "earmarked_animal_id": 999})
+    assert gateway.checkouts == []
+
+
+def test_without_a_gateway_card_payments_are_unavailable(service):
+    with pytest.raises(PaymentsUnavailable):
+        service.start_checkout({"amount_jod": "5", "purpose": "general"})
+    with pytest.raises(PaymentsUnavailable):
+        service.handle_webhook(b"{}", "valid")
+
+
+def test_a_confirmed_payment_is_recorded_with_the_confirmed_amount(paying_service):
+    outcome = paying_service.handle_webhook(_paid(amount_fils=40_000, earmarked_animal_id=KNOWN_ANIMAL), "valid")
+
+    assert outcome is WebhookOutcome.RECORDED
+    [donation] = paying_service.list_donations()
+    assert donation.amount_fils == 40_000
+    assert donation.purpose is P.MEDICAL_FUND
+    assert donation.earmarked_animal_id == KNOWN_ANIMAL
+    assert donation.received_on == TODAY
+
+
+def test_a_replayed_payment_is_recorded_once(paying_service):
+    assert paying_service.handle_webhook(_paid(), "valid") is WebhookOutcome.RECORDED
+    assert paying_service.handle_webhook(_paid(), "valid") is WebhookOutcome.ALREADY_RECORDED
+
+    impact = paying_service.impact()
+    assert impact.donation_count == 1
+    assert impact.total_raised_fils == 25_500
+
+
+def test_verified_events_that_need_nothing_are_ignored(paying_service):
+    assert paying_service.handle_webhook(None, "valid") is WebhookOutcome.IGNORED
+    assert paying_service.impact().donation_count == 0
+
+
+def test_a_bad_signature_is_refused_and_writes_nothing(paying_service):
+    with pytest.raises(InvalidWebhookSignature):
+        paying_service.handle_webhook(_paid(), "forged")
+    assert paying_service.impact().donation_count == 0
+
+
+@pytest.mark.parametrize(
+    "payment",
+    [
+        _paid(amount_fils=None),
+        _paid(amount_fils=MAX_DONATION_FILS + 10),
+        _paid(amount_fils=10),
+        _paid(purpose="vet_bills"),
+        _paid(purpose=None),
+    ],
+    ids=["wrong-currency", "over-max", "under-min", "unknown-purpose", "no-purpose"],
+)
+def test_payments_that_cannot_be_trusted_into_the_ledger_are_flagged_not_recorded(paying_service, payment, caplog):
+    """Gap B: money has moved, so this answers 200, but a charge the gateway
+    could not express in fils, or an impossible figure, must not enter a SUM
+    counted in JOD fils."""
+    assert paying_service.confirm_payment(payment) is WebhookOutcome.NEEDS_RECONCILIATION
+    assert paying_service.impact().donation_count == 0
+    assert "cs_fake_1" in caplog.text
+
+
+def test_a_gift_for_an_animal_that_has_gone_is_still_recorded_as_given(paying_service, caplog):
+    """Gap A: the donor paid for that animal; keep their intent and warn."""
+    outcome = paying_service.confirm_payment(_paid(earmarked_animal_id=999, donor_name="Secret Donor"))
+
+    assert outcome is WebhookOutcome.RECORDED
+    assert paying_service.list_donations()[0].earmarked_animal_id == 999
+    assert "999" in caplog.text
+    assert "Secret Donor" not in caplog.text
+
+
+def test_the_provider_charge_is_kept_beside_the_ledger_row(paying_service, database):
+    """The audit trail for the conversion: what Stripe charged, in its own
+    currency, next to the fils the ledger recorded."""
+    paying_service.confirm_payment(_paid())
+    with database.unit_of_work() as connection:
+        row = connection.execute(
+            "SELECT p.session_id, p.charged_amount_minor, p.charged_currency, d.amount_fils "
+            "FROM stripe_payments p JOIN donations d ON d.id = p.donation_id"
+        ).fetchone()
+    assert tuple(row) == ("cs_fake_1", 3_597, "usd", 25_500)

@@ -39,3 +39,24 @@ def test_domain_does_not_import_its_sibling(domain, forbidden):
     }
     offenders = {path: modules for path, modules in offenders.items() if modules}
     assert offenders == {}, f"domains/{domain} imports domains/{forbidden}: {offenders}"
+
+
+PROJECT = DOMAINS.parent
+PAYMENT_ADAPTER = DOMAINS / "donations" / "payments.py"
+
+
+def test_only_the_payment_adapter_imports_stripe():
+    """The Stripe SDK is a detail behind PaymentGateway. If any other piece of
+    application code imports it, Stripe has leaked past the adapter. Tests are
+    exempt: they drive the adapter and fake Stripe's responses."""
+    application_code = [
+        path
+        for path in PROJECT.rglob("*.py")
+        if not {"tests", ".venv", "venv", "node_modules"} & set(path.relative_to(PROJECT).parts)
+    ]
+    importers = sorted(
+        str(path.relative_to(PROJECT))
+        for path in application_code
+        if any(m == "stripe" or m.startswith("stripe.") for m in _imported_modules(path))
+    )
+    assert importers == [str(PAYMENT_ADAPTER.relative_to(PROJECT))]

@@ -129,3 +129,25 @@ CREATE TRIGGER IF NOT EXISTS donations_no_delete BEFORE DELETE ON donations
 BEGIN
     SELECT RAISE(ABORT, 'donations are append-only');
 END;
+
+-- Card payments confirmed by the payment provider. One row per paid Checkout
+-- session, written in the same transaction as the donation it produced. The
+-- UNIQUE session_id is what makes a replayed webhook harmless: the second
+-- insert conflicts, the transaction rolls back, and no second donation exists.
+-- A separate table rather than a column on donations, because
+-- CREATE TABLE IF NOT EXISTS reaches existing databases and ALTER would need a
+-- migration step. The foreign key stays inside the donations domain.
+--
+-- charged_amount_minor and charged_currency are what Stripe actually charged
+-- (US cents in test mode, because the test account cannot hold JOD). The
+-- donation row holds the same money converted to fils at the Central Bank of
+-- Jordan's fixed peg; keeping both side by side is the audit trail for that
+-- conversion.
+CREATE TABLE IF NOT EXISTS stripe_payments (
+    id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id           TEXT    NOT NULL UNIQUE,
+    donation_id          INTEGER NOT NULL UNIQUE REFERENCES donations (id),
+    charged_amount_minor INTEGER NOT NULL CHECK (charged_amount_minor > 0),
+    charged_currency     TEXT    NOT NULL,
+    recorded_at          TEXT    NOT NULL DEFAULT (datetime('now'))
+);
