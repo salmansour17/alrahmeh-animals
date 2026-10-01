@@ -134,8 +134,48 @@ control, status codes and what the public can see.
 
 Consequences: Business-logic coverage is 100% (provisional, 2026-09-30), but
 several things are deliberately thin: the concurrency guarantee is shown with a
-simulated stale read, not real threads; there are no frontend tests yet; Stripe
-will only ever be exercised through the fake payment adapter, never the real
-API; and the ledger has no corrections or reversals to test, because
+simulated stale read, not real threads; there are no frontend tests yet; the
+real Stripe adapter is tested offline (locally signed webhooks, a replaced
+`Session.create`) but never against Stripe's live API in the suite, which is
+checked by hand with the Stripe CLI instead; and the ledger has no corrections or reversals to test, because
 `CHECK (amount_fils > 0)` rules out a negative compensating row. A mistaken
 donation cannot currently be undone, which is a known gap.
+
+## 5. Stripe as a test-mode reference adapter, not the production Jordanian gateway
+
+Date: 2026-10-01
+Status: Decided
+
+Context: My professor asked for a Stripe integration to demonstrate SOLID and
+design patterns, and I am building from Spain, where a Stripe test account works
+immediately. But Stripe does not onboard businesses registered in Jordan, so the
+rescue could not take live payments through it, and the test account cannot even
+charge in JOD. Regional gateways that can (PayTabs, HyperPay) issue credentials
+only through merchant onboarding with the rescue's own business documents, which
+is not possible before the deadline.
+
+Decision: I deliberately did not build a production Jordanian gateway. The
+donation service depends on a `PaymentGateway` interface it owns (Dependency
+Inversion), and `StripeGateway` in `payments.py` is an Adapter that translates
+Stripe Checkout and its signed webhooks into the domain's own types, so no
+Stripe object reaches the service. Because the test account has no JOD, the
+adapter charges US dollars at the Central Bank of Jordan's fixed peg (709 fils
+per dollar) and converts the verified amount back into fils. `create_app`
+chooses the implementation, so switching provider means one new adapter and one
+line there.
+
+Alternatives considered: Building a PayTabs adapter now was rejected: without
+sandbox credentials it could not be run, and its payment callback needs a
+publicly reachable URL, which section 1a rules out, so it would be untested code
+I would have to defend. Calling Stripe directly from the donation service was
+rejected because the ledger's rules would then depend on one provider, and
+replacing it would mean rewriting business logic and its tests rather than
+swapping an adapter. Recording card donations in their charged currency was
+rejected because it would break the fils-only ledger that ADR-3 relies on.
+
+Consequences: Card donations work end to end in Stripe test mode only, charged
+in USD and recorded in fils, with the original charge kept beside each ledger
+row as the audit trail. Going live requires the rescue to open a merchant
+account with a regional provider and a new adapter tested against its sandbox,
+which would charge JOD directly and need no conversion. Until then, CliQ and
+bank-transfer donations are recorded by staff through the existing endpoint.
