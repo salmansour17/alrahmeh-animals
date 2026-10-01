@@ -10,6 +10,7 @@ from dataclasses import replace
 from datetime import datetime, timezone
 
 import pytest
+import stripe
 
 import app as app_module
 from app import AnimalDirectoryAdapter, create_app
@@ -17,6 +18,7 @@ from domains.animals.repository import SqliteAnimalRepository
 from domains.animals.service import AnimalService
 from tests.conftest import ADMIN_PASSWORD
 from tests.test_donations_service import FakeAnimalDirectory
+from tests.test_payments import WEBHOOK_SECRET, _Recorder, event, sign
 
 STAFF = {
     "Authorization": "Basic "
@@ -135,3 +137,101 @@ def test_amman_today_is_three_hours_ahead_of_utc(monkeypatch):
 
     monkeypatch.setattr(app_module, "datetime", LateEveningUTC)
     assert app_module.amman_today().isoformat() == "2026-10-01"
+
+
+# --- card payments over HTTP, through the real StripeGateway ----------------
+
+
+@pytest.fixture
+def paying_client(config):
+    keyed = replace(
+        config,
+        stripe_secret_key="sk_test_dummy_test_only",
+        stripe_webhook_secret=WEBHOOK_SECRET,
+        public_base_url="https://donate.example.org",
+    )
+    return create_app(keyed).test_client()
+
+
+def _webhook(client, payload: bytes, header: str | None):
+    headers = {"Content-Type": "application/json"}
+    if header is not None:
+        headers["Stripe-Signature"] = header
+    return client.post("/api/donations/stripe/webhook", data=payload, headers=headers)
+
+
+def test_checkout_is_public_and_returns_the_payment_page(paying_client, monkeypatch):
+    monkeypatch.setattr(stripe.checkout.Session, "create", _Recorder())
+    response = paying_client.post("/api/donations/checkout", json={"amount_jod": "25.500", "purpose": "general"})
+
+    assert response.status_code == 201
+    assert response.get_json() == {"checkout_url": "https://checkout.stripe.com/c/pay/cs_test_new"}
+    assert paying_client.get("/api/donations/impact").get_json()["donation_count"] == 0
+
+
+def test_checkout_urls_ignore_the_host_header(paying_client, monkeypatch):
+    recorder = _Recorder()
+    monkeypatch.setattr(stripe.checkout.Session, "create", recorder)
+    paying_client.post(
+        "/api/donations/checkout",
+        json={"amount_jod": "5", "purpose": "general"},
+        headers={"Host": "evil.example"},
+    )
+    assert recorder.kwargs["success_url"].startswith("https://donate.example.org/")
+
+
+def test_checkout_accepts_json_only(paying_client):
+    response = paying_client.post("/api/donations/checkout", data="amount_jod=5&purpose=general",
+                                  content_type="application/x-www-form-urlencoded")
+    assert response.status_code == 415
+
+
+def test_oversized_bodies_are_refused(paying_client):
+    response = paying_client.post("/api/donations/checkout", data="x" * (65 * 1024), content_type="application/json")
+    assert response.status_code == 413
+
+
+def test_a_signed_webhook_records_once_and_a_replay_does_not(paying_client):
+    payload = event(metadata={"purpose": "medical_fund"})
+
+    first = _webhook(paying_client, payload, sign(payload))
+    replay = _webhook(paying_client, payload, sign(payload))
+
+    assert (first.status_code, first.get_json()) == (200, {"status": "recorded"})
+    assert (replay.status_code, replay.get_json()) == (200, {"status": "already_recorded"})
+    impact = paying_client.get("/api/donations/impact").get_json()
+    assert impact["donation_count"] == 1
+    # USD 35.97 charged, recorded at the peg as 25.503 JOD.
+    assert impact["total_raised"]["amount_jod"] == "25.503"
+
+
+@pytest.mark.parametrize("header", [None, "t=1,v1=forged"], ids=["missing", "forged"])
+def test_an_unsigned_or_forged_webhook_is_400_and_writes_nothing(paying_client, header):
+    response = _webhook(paying_client, event(), header)
+    assert (response.status_code, response.get_json()) == (400, {"error": "invalid_signature"})
+    assert paying_client.get("/api/donations/impact").get_json()["donation_count"] == 0
+
+
+def test_other_events_are_acknowledged_and_ignored(paying_client):
+    payload = event(event_type="payment_intent.created")
+    assert _webhook(paying_client, payload, sign(payload)).get_json() == {"status": "ignored"}
+
+
+def test_without_keys_both_payment_endpoints_are_503_and_the_rest_works(client):
+    assert client.post("/api/donations/checkout", json={"amount_jod": "5", "purpose": "general"}).status_code == 503
+    assert _webhook(client, event(), "t=1,v1=x").status_code == 503
+    assert client.get("/api/donations/impact").status_code == 200
+    assert client.get("/api/animals").status_code == 200
+
+
+def test_a_live_key_is_refused_by_name_and_never_logged(config, caplog):
+    live = replace(
+        config,
+        stripe_secret_key="sk_live_dummyLIVEVALUE",
+        stripe_webhook_secret="whsec_dummyWEBHOOKVALUE",
+    )
+    client = create_app(live).test_client()
+
+    assert client.post("/api/donations/checkout", json={"amount_jod": "5", "purpose": "general"}).status_code == 503
+    assert "live key refused" in caplog.text
+    assert "VALUE" not in caplog.text and "sk_live_" not in caplog.text

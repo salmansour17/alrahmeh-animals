@@ -21,8 +21,9 @@ from domains.animals.repository import SqliteAnimalRepository
 from domains.animals.routes import create_animals_blueprint
 from domains.animals.service import AnimalNotFound, AnimalService
 from domains.donations.repository import SqliteDonationRepository
+from domains.donations.payments import StripeGateway
 from domains.donations.routes import create_donations_blueprint
-from domains.donations.service import DonationService
+from domains.donations.service import DonationService, PaymentGateway
 from security import require_admin
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
@@ -32,6 +33,17 @@ logger = logging.getLogger(__name__)
 # fixed offset is exact, and avoids zoneinfo, which on Windows needs the extra
 # tzdata package to know about Asia/Amman.
 AMMAN = timezone(timedelta(hours=3), "Asia/Amman")
+
+# Largest request body accepted anywhere. A Stripe webhook is a few kilobytes and
+# a donation form far less; anything bigger is refused with 413 before parsing.
+MAX_REQUEST_BYTES = 64 * 1024
+
+STRIPE_TEST_KEY_PREFIX = "sk_test_"
+STRIPE_LIVE_KEY_PREFIX = "sk_live_"
+# Where Stripe sends the donor afterwards: frontend pages, which only say thank
+# you or offer to try again. Neither writes to the ledger.
+CHECKOUT_SUCCESS_PATH = "/donate/thanks"
+CHECKOUT_CANCEL_PATH = "/donate"
 
 
 def amman_today() -> date:
@@ -70,6 +82,7 @@ def create_app(config: Config | None = None) -> Flask:
     config = config or load_config()
     app = Flask(__name__, static_folder=None)
     app.config["APP_CONFIG"] = config
+    app.config["MAX_CONTENT_LENGTH"] = MAX_REQUEST_BYTES
 
     config.data_dir.mkdir(parents=True, exist_ok=True)
 
@@ -91,12 +104,42 @@ def create_app(config: Config | None = None) -> Flask:
         SqliteDonationRepository(database),
         animals=AnimalDirectoryAdapter(animal_service),
         today=amman_today,
+        gateway=_payment_gateway(config),
     )
     app.register_blueprint(create_donations_blueprint(donation_service))
 
     app.register_error_handler(HTTPException, _json_http_error)
     _register_meta_routes(app)
     return app
+
+
+def _payment_gateway(config: Config) -> PaymentGateway | None:
+    """Choose the card payment provider, or None to switch card donations off.
+
+    Every "off" reason is logged once, here, by name, and never with any part
+    of a key. The app still boots either way: a payment misconfiguration must
+    not take the animal pages and impact counters down with it.
+    """
+    key, webhook_secret = config.stripe_secret_key, config.stripe_webhook_secret
+    if key and key.startswith(STRIPE_LIVE_KEY_PREFIX):
+        logger.error("Card donations disabled: live key refused, this build is test mode only")
+        return None
+    if not key or not webhook_secret:
+        logger.warning("Card donations disabled: STRIPE_SECRET_KEY or STRIPE_WEBHOOK_SECRET not set")
+        return None
+    if not key.startswith(STRIPE_TEST_KEY_PREFIX):
+        logger.error("Card donations disabled: STRIPE_SECRET_KEY is not a test-mode secret key")
+        return None
+    if config.public_base_url is None:
+        logger.error("Card donations disabled: PUBLIC_BASE_URL is invalid")
+        return None
+    return StripeGateway(
+        secret_key=key,
+        webhook_secret=webhook_secret,
+        success_url=config.public_base_url + CHECKOUT_SUCCESS_PATH,
+        cancel_url=config.public_base_url + CHECKOUT_CANCEL_PATH,
+        local_timezone=AMMAN,
+    )
 
 
 def _json_http_error(error: HTTPException):
