@@ -41,8 +41,8 @@ manifest inside a subfolder.
 `require_admin` in `security.py`. No users table, no sessions, no password
 hashing — one shared secret is all this organisation needs, and it keeps ADR-1's
 "no user accounts" reasoning literally true. Unset means the staff endpoints fail
-closed with 503; never add a default password. Per-staff accounts are ADR-5, the
-"thing I deliberately chose not to build."
+closed with 503; never add a default password. Per-staff accounts are a
+deliberate omission argued in the README and the report (not an ADR).
 
 Every write endpoint in either domain gets `@require_admin`, with exactly two
 exceptions, both in the Stripe payment flow: `POST /api/donations/checkout` is
@@ -85,9 +85,12 @@ Dependency Inversion on a real external integration. It reverses the earlier
   forbidden. A separate table that creates itself on boot avoids that. Either
   way it changes what ADR-3 describes — stop and ask before editing
   `schema.sql`.
-- Stripe may not onboard businesses based in Jordan; the real handover may need
-  a local provider behind the same `PaymentGateway`. That is part of the Adapter
-  argument, not a reason to skip it.
+- **Stripe is the test-mode reference adapter; a regional gateway (PayTabs,
+  HyperPay) is the production path** behind the same `PaymentGateway`. Stripe
+  does not onboard businesses based in Jordan, so the rescue cannot go live on
+  it. That regional adapter is deliberately not built (ADR-5): without sandbox
+  credentials it could not be run or tested. At handover, switching provider
+  means one new adapter class and one line in `create_app`.
 
 ## Hard constraints — never violate these
 
@@ -107,7 +110,9 @@ Dependency Inversion on a real external integration. It reverses the earlier
 - Keep declared dependencies under 12 across both manifests. Currently 8
   planned; `stripe` makes it 9.
 - Keep the file count between 15 and 50, excluding lockfiles, `.venv` and
-  `node_modules`. Don't split every button into its own component file.
+  `node_modules`. The assignment calls this rough guidance; the final count may
+  land a couple over 50 once `static/dist` is committed, which I accepted on
+  2026-10-01. Don't split every button into its own component file.
 
 ## The two feature domains
 
@@ -141,10 +146,12 @@ db/               schema.sql, connection.py
 domains/
   animals/        models.py repository.py service.py routes.py
   donations/      models.py repository.py service.py routes.py
-                  payments.py  (PaymentGateway + Stripe and fake adapters)
+                  payments.py  (StripeGateway adapter; the PaymentGateway Protocol
+                  lives in service.py, the fake gateway in the tests)
 frontend/src/     main.jsx App.jsx api.js pages/ components/ styles.css
 static/dist/      committed build output
-tests/            conftest.py test_animals_service.py test_donations_service.py
+tests/            conftest.py, a service and a routes test file per domain,
+                  test_payments.py, test_security.py, test_domain_boundary.py
 docs/             report.md architecture.md schema.md
 ```
 
@@ -202,8 +209,9 @@ These are 30% of the grade, more than the working features.
 Consequences. Entries must land across at least 3 different commit dates, as the
 decisions are actually made. The five are: (1) backend framework, (2) how the
 domains stay independently modularizable, (3) the SQLite schema decision, (4)
-testing approach and what I left thin, (5) what I chose not to build:
-per-staff user accounts, in favour of one shared `ADMIN_PASSWORD`.
+testing approach and what I left thin, (5) what I chose not to build: the
+production Jordanian payment gateway — Stripe is built as a test-mode reference
+adapter, PayTabs/HyperPay is the production path behind the same interface.
 
 **`AI_USAGE.md`** — add a row every session. Fill in the date, tool, my actual
 prompt, disposition, and what changed. **Leave the last column to me.** That
@@ -251,9 +259,9 @@ calendar days, no single day over 40% of the total, pushed to
 | Sep 28 | `chore/project-scaffold`, `feat/sqlite-persistence` | scaffold, ADR-1, schema, connection layer, ADR-3 |
 | Sep 29 | `feat/admin-auth`, `chore/stripe-scope`, `feat/animal-intake-adoption` | shared admin password, Stripe scope change, entity, repository, guarded transitions, tests, ADR-2 |
 | Sep 30 | `feat/donation-impact-ledger` | ledger, impact stats, tests, coverage run, ADR-4 |
-| Oct 1 | `feat/stripe-donations`, then `feat/react-frontend` | PaymentGateway + Stripe and fake adapters, checkout and verified webhook, idempotency, tests; then Vite at root, api client, router, animal pages |
+| Oct 1 | `feat/stripe-donations`, then `feat/react-frontend` | PaymentGateway + Stripe and fake adapters, checkout and verified webhook, idempotency, tests, ADR-5; then Vite at root, api client, router, animal pages |
 | Oct 2 | `feat/react-frontend` | homepage counters, donate page (redirects to Stripe Checkout), bilingual header, committed build |
-| Oct 3 | `docs/report-and-final-adrs` | ADR-5 (per-staff accounts), architecture and schema diagrams, 4-5 page report |
+| Oct 3 | `docs/report-and-final-adrs` | architecture and schema diagrams, 4-5 page report (per-staff accounts argued there as a second deliberate omission) |
 | Oct 4 | `chore/deployment-contract-check` | clean-clone verification, final README numbers |
 
 If I fall behind, protect in this order: working domains and their tests first,
