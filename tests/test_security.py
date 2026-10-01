@@ -11,6 +11,7 @@ from dataclasses import replace
 
 import pytest
 
+import app as app_module
 from app import create_app
 from config import DEFAULT_PUBLIC_BASE_URL, load_config
 from tests.conftest import ADMIN_PASSWORD
@@ -119,3 +120,50 @@ def test_public_base_url_rejects_anything_but_an_origin(monkeypatch, raw):
     localhost, which would strand donors on a dead page after paying."""
     monkeypatch.setenv("PUBLIC_BASE_URL", raw)
     assert load_config().public_base_url is None
+
+
+# --- serving the frontend ----------------------------------------------------
+
+
+@pytest.fixture
+def site(tmp_path, config, monkeypatch):
+    """An app serving a stand-in build: index.html and one asset."""
+    dist = tmp_path / "dist"
+    (dist / "assets").mkdir(parents=True)
+    (dist / "index.html").write_text("<div id=root></div>", encoding="utf-8")
+    (dist / "assets" / "app.js").write_text("console.log(1)", encoding="utf-8")
+    (dist / "assets" / "font.woff2").write_bytes(b"wOF2")
+    monkeypatch.setattr(app_module, "FRONTEND_DIST", dist)
+    return app_module.create_app(config).test_client()
+
+
+def test_the_built_app_and_its_assets_are_served(site):
+    assert b"id=root" in site.get("/").data
+    assert site.get("/assets/app.js").data == b"console.log(1)"
+    assert site.get("/assets/font.woff2").content_type == "font/woff2"
+
+
+@pytest.mark.parametrize("path", ["/animals", "/animals/3", "/donate/thanks"])
+def test_client_side_routes_get_the_app(site, path):
+    response = site.get(path)
+    assert response.status_code == 200
+    assert b"id=root" in response.data
+
+
+def test_unknown_api_paths_stay_json_404s(site):
+    response = site.get("/api/no-such-thing")
+    assert response.status_code == 404
+    assert response.get_json() == {"error": "not_found"}
+
+
+@pytest.mark.parametrize("path", ["/../app.py", "/%2e%2e/app.py", "/assets/../../app.py", "/..%2fapp.py"])
+def test_nothing_outside_the_build_can_be_read(site, path):
+    response = site.get(path)
+    assert b"create_app" not in response.data
+
+
+def test_a_missing_build_is_a_clear_message_not_a_crash(tmp_path, config, monkeypatch):
+    monkeypatch.setattr(app_module, "FRONTEND_DIST", tmp_path / "not-built")
+    response = app_module.create_app(config).test_client().get("/animals")
+    assert response.status_code == 200
+    assert b"has not been built" in response.data
