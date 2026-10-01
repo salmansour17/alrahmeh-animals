@@ -12,6 +12,7 @@ from dataclasses import replace
 import pytest
 
 from app import create_app
+from config import DEFAULT_PUBLIC_BASE_URL, load_config
 from tests.conftest import ADMIN_PASSWORD
 
 
@@ -62,3 +63,59 @@ def test_public_endpoints_stay_public(config):
     client = create_app(replace(config, admin_password=None)).test_client()
     assert client.get("/api/health").status_code == 200
     assert client.get("/").status_code == 200
+
+
+# --- secrets in configuration -------------------------------------------------
+
+
+def test_config_repr_never_shows_secrets(monkeypatch):
+    """A Config printed in a log line or a failing test must not reveal any
+    secret. The values here are dummies, recognisable if they ever leaked."""
+    monkeypatch.setenv("ADMIN_PASSWORD", "dummy-admin-VALUE")
+    monkeypatch.setenv("STRIPE_SECRET_KEY", "sk_test_dummyVALUE")
+    monkeypatch.setenv("STRIPE_WEBHOOK_SECRET", "whsec_dummyVALUE")
+
+    config = load_config()
+    shown = repr(config) + str(config)
+
+    assert config.stripe_secret_key == "sk_test_dummyVALUE"
+    assert "VALUE" not in shown
+    assert "sk_test_" not in shown and "whsec_" not in shown
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        (None, DEFAULT_PUBLIC_BASE_URL),
+        ("https://donate.example.org", "https://donate.example.org"),
+        ("https://donate.example.org/", "https://donate.example.org"),
+        ("http://localhost:5173", "http://localhost:5173"),
+    ],
+)
+def test_public_base_url_accepts_a_bare_origin(monkeypatch, raw, expected):
+    if raw is None:
+        monkeypatch.delenv("PUBLIC_BASE_URL", raising=False)
+    else:
+        monkeypatch.setenv("PUBLIC_BASE_URL", raw)
+    assert load_config().public_base_url == expected
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "javascript:alert(1)",
+        "ftp://example.org",
+        "//evil.example",
+        "https://",
+        "https://good.example@evil.example",
+        "https://example.org/donate",
+        "https://example.org?next=https://evil.example",
+        "https://example.org#x",
+        "example.org",
+    ],
+)
+def test_public_base_url_rejects_anything_but_an_origin(monkeypatch, raw):
+    """An invalid value disables payments (None) rather than falling back to
+    localhost, which would strand donors on a dead page after paying."""
+    monkeypatch.setenv("PUBLIC_BASE_URL", raw)
+    assert load_config().public_base_url is None

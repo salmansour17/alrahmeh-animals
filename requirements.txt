@@ -1,5 +1,7 @@
 # Runtime
 flask==3.1.0
+# Test-mode card donations; imported only by domains/donations/payments.py
+stripe==15.6.1
 
 # Test tooling
 pytest==8.3.4
