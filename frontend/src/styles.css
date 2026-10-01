@@ -1,0 +1,192 @@
+/* Warm, friendly and trustworthy: cream paper, sage greens, a coral accent,
+   rounded shapes and gentle motion. */
+
+/* Nunito, self-hosted: only the two latin woff2 files are bundled, and no
+   request ever goes to a font service. */
+@font-face {
+  font-family: "Nunito";
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("../../node_modules/@fontsource/nunito/files/nunito-latin-700-normal.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Nunito";
+  font-style: normal;
+  font-weight: 800;
+  font-display: swap;
+  src: url("../../node_modules/@fontsource/nunito/files/nunito-latin-800-normal.woff2") format("woff2");
+}
+
+:root {
+  --cream: #fff8f0;
+  --paper: #ffffff;
+  --sand: #f6e9da;
+  --sage: #8fb59a;
+  --sage-soft: #e3efe5;
+  --teal: #2f6f68;
+  --coral: #ef7b5c;
+  --coral-deep: #c4533a; /* dark enough for white text on buttons */
+  --coral-soft: #fde5dc;
+  --ink: #3d3530;
+  --muted: #7c6f66;
+  --round: 22px;
+  --shadow: 0 8px 24px rgba(92, 64, 44, 0.08);
+  --heading: "Nunito", ui-rounded, "Segoe UI", system-ui, sans-serif;
+
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans Arabic", sans-serif;
+  color: var(--ink);
+  background: var(--cream);
+  line-height: 1.6;
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; }
+h1, h2, h3, .brand, .button, .chip, .card-cta { font-family: var(--heading); }
+h1 { font-weight: 800; line-height: 1.15; letter-spacing: -0.01em; }
+h2 { font-weight: 800; }
+a { color: var(--teal); }
+img { max-width: 100%; display: block; }
+.icon { flex: none; vertical-align: -0.2em; }
+.muted { color: var(--muted); }
+
+main { max-width: 1080px; margin: 0 auto; padding: 1.5rem 1.25rem 4rem; }
+
+/* --- header & footer ------------------------------------------------------ */
+
+.site-header {
+  position: sticky; top: 0; z-index: 10;
+  display: flex; flex-wrap: wrap; gap: 1rem; align-items: center; justify-content: space-between;
+  padding: 0.8rem 1.25rem;
+  background: rgba(255, 248, 240, 0.92);
+  backdrop-filter: blur(6px);
+  border-bottom: 1px solid var(--sand);
+}
+.brand { display: flex; align-items: center; gap: 0.6rem; color: var(--ink); text-decoration: none; font-weight: 800; font-size: 1.15rem; line-height: 1.1; }
+.brand small { display: block; font-weight: 700; font-size: 0.75rem; color: var(--muted); }
+.brand-mark { display: grid; place-items: center; width: 40px; height: 40px; border-radius: 50%; background: var(--coral-soft); color: var(--coral-deep); }
+.site-header nav { display: flex; gap: 0.5rem; }
+.site-header nav a { padding: 0.45rem 0.9rem; border-radius: 999px; color: var(--ink); text-decoration: none; font-weight: 600; transition: background 0.2s; }
+.site-header nav a:hover, .site-header nav a.active { background: var(--sage-soft); color: var(--teal); }
+
+.site-footer { text-align: center; padding: 2rem 1rem 3rem; color: var(--muted); }
+.site-footer .icon { color: var(--coral); }
+
+/* --- hero ------------------------------------------------------------------- */
+
+.hero {
+  position: relative; overflow: hidden;
+  display: grid; grid-template-columns: 1.4fr 1fr; gap: 1.5rem; align-items: center;
+  padding: 2.5rem 2rem; margin-bottom: 1.75rem;
+  border-radius: 36px; background: var(--sage-soft);
+}
+.hero::after { /* a soft organic blob behind the drawing */
+  content: ""; position: absolute; right: -60px; bottom: -80px; width: 340px; height: 300px;
+  background: var(--coral-soft); border-radius: 58% 42% 55% 45% / 50% 60% 40% 50%; z-index: 0;
+}
+.hero > * { position: relative; z-index: 1; }
+.hero h1 { font-size: clamp(2rem, 4.5vw, 3rem); margin: 0.3rem 0 0.75rem; color: var(--teal); }
+.eyebrow { display: inline-flex; align-items: center; gap: 0.4rem; margin: 0; font-weight: 700; color: var(--coral-deep); }
+.lead { font-size: 1.15rem; margin: 0; }
+.hero-art .portrait { max-width: 260px; margin: 0 auto; }
+
+/* --- filter chips ------------------------------------------------------------ */
+
+.chips { display: flex; flex-wrap: wrap; gap: 0.6rem; margin-bottom: 1.5rem; }
+.chip {
+  border: 2px solid var(--sand); background: var(--paper); color: var(--ink);
+  border-radius: 999px; padding: 0.45rem 1.05rem; font-size: 0.95rem; font-weight: 700; cursor: pointer;
+  transition: border-color 0.2s, background 0.2s, transform 0.2s;
+}
+.chip:hover { border-color: var(--sage); transform: translateY(-1px); }
+.chip.active { background: var(--teal); border-color: var(--teal); color: #fff; }
+
+/* --- cards ------------------------------------------------------------------- */
+
+.cards { list-style: none; padding: 0; margin: 0; display: grid; gap: 1.4rem; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); }
+.card {
+  display: flex; flex-direction: column; height: 100%;
+  background: var(--paper); border-radius: var(--round); overflow: hidden;
+  color: inherit; text-decoration: none; box-shadow: var(--shadow);
+  transition: transform 0.25s ease, box-shadow 0.25s ease;
+}
+.card:hover, .card:focus-visible { transform: translateY(-5px); box-shadow: 0 14px 32px rgba(92, 64, 44, 0.14); }
+.card .photo { aspect-ratio: 4 / 3; border-radius: 0; }
+.card-body { padding: 1rem 1.2rem 1.25rem; display: flex; flex-direction: column; gap: 0.25rem; flex: 1; }
+.card h2 { margin: 0.35rem 0 0; font-size: 1.4rem; }
+.card p { margin: 0; }
+.card-cta { margin-top: auto; padding-top: 0.6rem; display: inline-flex; align-items: center; gap: 0.35rem; color: var(--coral-deep); font-weight: 800; }
+.card:hover .card-cta .icon { transform: scale(1.2); }
+.card-cta .icon { transition: transform 0.25s; }
+
+/* --- photos & portraits --------------------------------------------------- */
+
+.photo { background: var(--sand); border-radius: var(--round); overflow: hidden; display: grid; place-items: center; }
+.photo img { width: 100%; height: 100%; object-fit: cover; }
+.portrait { width: 80%; height: auto; }
+.portrait-blob { fill: var(--cream); }
+.portrait-dog { color: #8a5a3c; }
+.portrait-cat { color: #5f6b62; }
+.portrait-other { color: var(--teal); }
+.card:nth-child(3n + 2) .photo, li:nth-child(3n + 2) .card .photo { background: var(--sage-soft); }
+li:nth-child(3n) .card .photo { background: var(--coral-soft); }
+
+/* --- badges --------------------------------------------------------------- */
+
+.badge { align-self: flex-start; display: inline-block; padding: 0.15rem 0.7rem; border-radius: 999px; font-size: 0.8rem; font-weight: 700; }
+.badge-available { background: var(--sage-soft); color: var(--teal); }
+.badge-fostering { background: #fff1cf; color: #8a5b00; }
+.badge-pending { background: var(--coral-soft); color: var(--coral-deep); }
+.badge-adopted { background: #efe7fb; color: #5b3f8c; }
+
+/* --- profile page --------------------------------------------------------- */
+
+.back { display: inline-block; font-weight: 700; text-decoration: none; }
+.back:hover { text-decoration: underline; }
+.profile { display: grid; grid-template-columns: 1fr 1.15fr; gap: 2.25rem; align-items: start; }
+.profile-photo .photo { aspect-ratio: 1; border-radius: 40% 60% 55% 45% / 45% 45% 55% 55%; box-shadow: var(--shadow); }
+.profile h1 { font-size: clamp(2rem, 4vw, 2.75rem); margin: 0.5rem 0 0.5rem; color: var(--teal); }
+.facts { list-style: none; padding: 0; margin: 1.25rem 0; display: grid; gap: 0.5rem; }
+.facts li { display: flex; gap: 0.6rem; align-items: center; }
+.facts .icon { color: var(--coral-deep); }
+
+.panel { background: var(--paper); border-radius: var(--round); padding: 1.2rem 1.4rem; margin-top: 1.25rem; box-shadow: var(--shadow); }
+.panel h2 { display: flex; align-items: center; gap: 0.5rem; margin: 0 0 0.6rem; font-size: 1.2rem; }
+.panel h2 .icon { color: var(--sage); }
+.panel p { margin: 0 0 0.9rem; }
+.panel-warm { background: var(--coral-soft); }
+.panel-warm h2 .icon { color: var(--coral-deep); }
+.checklist { margin: 0; padding: 0; list-style: none; display: grid; gap: 0.35rem; }
+.checklist li::before { content: "✓"; display: inline-grid; place-items: center; width: 1.4rem; height: 1.4rem; margin-right: 0.5rem; border-radius: 50%; background: var(--sage-soft); color: var(--teal); font-weight: 800; font-size: 0.8rem; }
+
+.button {
+  display: inline-block; padding: 0.75rem 1.4rem; border-radius: 999px;
+  background: var(--coral-deep); color: #fff; font-weight: 800; text-decoration: none;
+  transition: transform 0.2s, background 0.2s;
+}
+.button:hover { background: #a9442e; transform: translateY(-2px); }
+
+/* --- friendly states ------------------------------------------------------ */
+
+.gentle { display: flex; gap: 0.5rem; align-items: center; justify-content: center; padding: 3rem 1rem; color: var(--muted); font-size: 1.1rem; text-align: center; }
+.gentle .icon { color: var(--sage); animation: wiggle 1.2s ease-in-out infinite; }
+.gentle.error { color: var(--coral-deep); }
+.gentle-page { text-align: center; padding: 4rem 1rem; }
+.gentle-page .icon { color: var(--coral); }
+
+@keyframes wiggle { 0%, 100% { transform: rotate(-8deg); } 50% { transform: rotate(8deg); } }
+
+/* --- accessibility & small screens --------------------------------------- */
+
+a:focus-visible, button:focus-visible { outline: 3px solid var(--coral); outline-offset: 3px; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+}
+
+@media (max-width: 720px) {
+  .hero { grid-template-columns: 1fr; padding: 2rem 1.25rem; }
+  .hero-art { display: none; }
+  .profile { grid-template-columns: 1fr; }
+  .profile-photo { max-width: 360px; margin: 0 auto; width: 100%; }
+}
