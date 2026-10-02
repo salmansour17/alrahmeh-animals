@@ -15,18 +15,29 @@ from itertools import product
 
 import pytest
 
+from db.connection import SCHEMA_PATH
 from domains.animals.models import (
     MedicalRecordType,
     NewAnimal,
+    NewPlacementRequest,
     PlacementStatus,
+    RequestKind,
+    RequestOutcome,
+    StatusMove,
     ValidationError,
 )
-from domains.animals.repository import SqliteAnimalRepository
+from domains.animals.repository import SqliteAnimalRepository, SqlitePlacementRepository
 from domains.animals.service import (
     ALLOWED_TRANSITIONS,
+    AdoptionAlreadyApproved,
     AnimalNotFound,
     AnimalService,
     IllegalTransition,
+    PlacementService,
+    RequestAlreadyDecided,
+    RequestConflict,
+    RequestNotAccepted,
+    RequestNotFound,
     TransitionConflict,
 )
 
@@ -326,3 +337,277 @@ def test_placement_counts_include_every_status_even_when_zero(service):
         S.PENDING: 0,
         S.ADOPTED: 2,
     }
+
+
+# --- adoption and foster requests --------------------------------------------
+
+K = RequestKind
+APPLICANT = {"name": "Rana Haddad", "email": "rana@example.org", "message": "We have a garden."}
+
+
+@pytest.fixture
+def placement_repository(database) -> SqlitePlacementRepository:
+    return SqlitePlacementRepository(database)
+
+
+@pytest.fixture
+def placements(placement_repository, service) -> PlacementService:
+    return PlacementService(placement_repository, service)
+
+
+def _ask(placements, animal_id, kind=K.ADOPTION, **extra):
+    return placements.submit(animal_id, {"kind": kind.value, **APPLICANT, **extra})
+
+
+def _request_in(placement_repository, animal_id, kind) -> int:
+    """A request created directly, bypassing the who-may-ask rules, so a
+    decision can be tested against every animal status."""
+    return placement_repository.add_request(
+        animal_id, NewPlacementRequest.from_payload({"kind": kind.value, **APPLICANT})
+    ).id
+
+
+def _outcome(placement_repository, request_id) -> RequestOutcome:
+    return placement_repository.get_request(request_id).outcome
+
+
+def test_request_enums_match_the_schema_check_constraints():
+    schema = SCHEMA_PATH.read_text(encoding="utf-8")
+    for column, enum in (("kind", RequestKind), ("outcome", RequestOutcome)):
+        allowed = re.search(rf"CHECK \({column} IN \(([^)]*)\)\)", schema).group(1)
+        assert {v.strip().strip("'") for v in allowed.split(",")} == {e.value for e in enum}
+
+
+ACCEPTED = {
+    (K.ADOPTION, S.AVAILABLE),
+    (K.FOSTER, S.AVAILABLE),
+    (K.ADOPTION, S.FOSTERING),
+    (K.ADOPTION, S.PENDING),
+}
+
+
+@pytest.mark.parametrize(("kind", "status"), list(product(K, S)), ids=lambda v: v.value)
+def test_who_may_ask_for_what(service, placements, kind, status):
+    animal_id = _animal_in(service, status)
+    if (kind, status) in ACCEPTED:
+        request = _ask(placements, animal_id, kind)
+        assert request.outcome is RequestOutcome.OPEN
+        assert service.get(animal_id).status is status  # asking never moves an animal
+    else:
+        with pytest.raises(RequestNotAccepted):
+            _ask(placements, animal_id, kind)
+
+
+# What approving a request does, for every kind and starting status.
+APPROVE = {
+    (K.ADOPTION, S.AVAILABLE): S.PENDING,
+    (K.ADOPTION, S.FOSTERING): S.PENDING,
+    (K.ADOPTION, S.PENDING): AdoptionAlreadyApproved,
+    (K.ADOPTION, S.ADOPTED): IllegalTransition,
+    (K.FOSTER, S.AVAILABLE): S.FOSTERING,
+    (K.FOSTER, S.FOSTERING): IllegalTransition,
+    (K.FOSTER, S.PENDING): IllegalTransition,
+    (K.FOSTER, S.ADOPTED): IllegalTransition,
+}
+
+
+@pytest.mark.parametrize(("kind", "status"), list(product(K, S)), ids=lambda v: v.value)
+def test_approving_every_kind_from_every_status(service, placements, placement_repository, kind, status):
+    animal_id = _animal_in(service, status)
+    request_id = _request_in(placement_repository, animal_id, kind)
+    expected = APPROVE[(kind, status)]
+
+    if isinstance(expected, PlacementStatus):
+        decided = placements.decide(request_id, {"outcome": "approved"})
+        assert decided.outcome is RequestOutcome.APPROVED
+        assert service.get(animal_id).status is expected
+        assert service.status_history(animal_id)[-1].reason == f"{kind.value} request {request_id} approved"
+    else:
+        with pytest.raises(expected):
+            placements.decide(request_id, {"outcome": "approved"})
+        assert service.get(animal_id).status is status
+        assert _outcome(placement_repository, request_id) is RequestOutcome.OPEN
+
+
+def test_a_decided_request_cannot_be_approved_again(service, placements):
+    request = _ask(placements, _animal_in(service, S.AVAILABLE))
+    placements.decide(request.id, {"outcome": "declined"})
+    with pytest.raises(RequestAlreadyDecided):
+        placements.decide(request.id, {"outcome": "approved"})
+
+
+def test_declining_an_open_request_changes_only_the_request(service, placements):
+    animal_id = _animal_in(service, S.AVAILABLE)
+    chosen, backup = _ask(placements, animal_id), _ask(placements, animal_id)
+    placements.decide(chosen.id, {"outcome": "approved"})
+
+    placements.decide(backup.id, {"outcome": "declined"})
+
+    # Declining a backup must not undo the adoption that is going ahead.
+    assert service.get(animal_id).status is S.PENDING
+
+
+def test_when_the_approved_adoption_falls_through_the_next_can_be_approved(
+    service, placements, placement_repository
+):
+    animal_id = _animal_in(service, S.AVAILABLE)
+    first, backup = _ask(placements, animal_id), _ask(placements, animal_id)
+    placements.decide(first.id, {"outcome": "approved"})
+
+    placements.decide(first.id, {"outcome": "declined", "reason": "Family moved abroad"})
+
+    assert service.get(animal_id).status is S.AVAILABLE
+    assert service.status_history(animal_id)[-1].reason == "Family moved abroad"
+    assert _outcome(placement_repository, backup.id) is RequestOutcome.OPEN
+    placements.decide(backup.id, {"outcome": "approved"})
+    assert service.get(animal_id).status is S.PENDING
+
+
+def test_an_approved_foster_cannot_be_declined(service, placements):
+    request = _ask(placements, _animal_in(service, S.AVAILABLE), K.FOSTER)
+    placements.decide(request.id, {"outcome": "approved"})
+    with pytest.raises(RequestAlreadyDecided):
+        placements.decide(request.id, {"outcome": "declined"})
+
+
+def test_a_declined_request_cannot_be_declined_again(service, placements):
+    request = _ask(placements, _animal_in(service, S.AVAILABLE))
+    placements.decide(request.id, {"outcome": "declined"})
+    with pytest.raises(RequestAlreadyDecided):
+        placements.decide(request.id, {"outcome": "declined"})
+
+
+def test_approving_a_foster_declines_other_foster_requests_but_not_adoptions(
+    service, placements, placement_repository
+):
+    animal_id = _animal_in(service, S.AVAILABLE)
+    chosen = _ask(placements, animal_id, K.FOSTER)
+    other_foster = _ask(placements, animal_id, K.FOSTER)
+    adoption = _ask(placements, animal_id, K.ADOPTION)
+
+    placements.decide(chosen.id, {"outcome": "approved"})
+
+    assert service.get(animal_id).status is S.FOSTERING
+    assert _outcome(placement_repository, other_foster.id) is RequestOutcome.DECLINED
+    assert _outcome(placement_repository, adoption.id) is RequestOutcome.OPEN
+
+
+def test_adoption_declines_every_remaining_open_request(service, placements, placement_repository):
+    animal_id = _animal_in(service, S.AVAILABLE)
+    chosen = _ask(placements, animal_id)
+    foster = _ask(placements, animal_id, K.FOSTER)
+    placements.decide(chosen.id, {"outcome": "approved"})
+    backup = _ask(placements, animal_id)
+
+    service.transition(animal_id, {"to": "adopted"})
+
+    assert _outcome(placement_repository, chosen.id) is RequestOutcome.APPROVED
+    assert _outcome(placement_repository, foster.id) is RequestOutcome.DECLINED
+    assert _outcome(placement_repository, backup.id) is RequestOutcome.DECLINED
+    assert placements.list_requests("open") == []
+
+
+def test_two_staff_deciding_at_once_only_one_wins(service, placements, placement_repository):
+    """The second decision was based on a stale read: the request was open
+    when it looked, but the first decision landed in between."""
+    request = _ask(placements, _animal_in(service, S.AVAILABLE))
+    stale_view = placement_repository.get_request(request.id)
+
+    class StaleRequests:
+        def __init__(self, real):
+            self._real = real
+
+        def __getattr__(self, name):
+            return getattr(self._real, name)
+
+        def get_request(self, request_id):
+            return stale_view
+
+    placements.decide(request.id, {"outcome": "declined"})  # the first member of staff
+    late = PlacementService(StaleRequests(placement_repository), service)
+    with pytest.raises(RequestConflict):
+        late.decide(request.id, {"outcome": "approved"})
+    assert _outcome(placement_repository, request.id) is RequestOutcome.DECLINED
+
+
+def test_a_failed_status_change_rolls_back_the_decision(service, placement_repository):
+    """If the animal moved meanwhile, neither the decision nor the move lands."""
+    animal_id = _animal_in(service, S.FOSTERING)
+    request_id = _request_in(placement_repository, animal_id, K.ADOPTION)
+
+    landed = placement_repository.decide(
+        request_id,
+        RequestOutcome.OPEN,
+        RequestOutcome.APPROVED,
+        StatusMove(animal_id, S.AVAILABLE, S.PENDING, "stale"),  # it is not available
+        frozenset(),
+    )
+
+    assert landed is False
+    assert _outcome(placement_repository, request_id) is RequestOutcome.OPEN
+    assert service.get(animal_id).status is S.FOSTERING
+
+
+def test_a_filled_honeypot_is_accepted_silently_and_stores_nothing(service, placements):
+    animal_id = _animal_in(service, S.AVAILABLE)
+    assert _ask(placements, animal_id, website="http://cheap-pills.example") is None
+    # Even an invalid bot submission gets the same silent answer.
+    assert placements.submit(animal_id, {"website": "x", "kind": "nonsense"}) is None
+    assert placements.list_requests() == []
+
+
+@pytest.mark.parametrize(
+    ("payload", "complaint"),
+    [
+        (None, "JSON object"),
+        ({"kind": "adoption", "name": "Rana"}, "missing field(s): email"),
+        ({**APPLICANT, "kind": "sponsor"}, "kind must be one of"),
+        ({**APPLICANT, "kind": "adoption", "phone": "079"}, "unknown field(s): phone"),
+        ({**APPLICANT, "kind": "adoption", "name": "x" * 121}, "at most 120"),
+        ({**APPLICANT, "kind": "adoption", "message": "x" * 2001}, "at most 2000"),
+        ({**APPLICANT, "kind": "adoption", "email": "rana.example.org"}, "must look like"),
+        ({**APPLICANT, "kind": "adoption", "email": "rana@localhost"}, "must look like"),
+        ({**APPLICANT, "kind": "adoption", "email": "ra na@example.org"}, "must look like"),
+        ({**APPLICANT, "kind": "adoption", "email": "x" * 250 + "@a.io"}, "at most 254"),
+    ],
+)
+def test_invalid_requests_are_rejected_without_echoing_personal_data(
+    service, placements, payload, complaint
+):
+    animal_id = _animal_in(service, S.AVAILABLE)
+    with pytest.raises(ValidationError, match=re.escape(complaint)) as raised:
+        placements.submit(animal_id, payload)
+    assert "rana" not in str(raised.value).lower()
+    assert placements.list_requests() == []
+
+
+@pytest.mark.parametrize(
+    ("payload", "complaint"),
+    [
+        ({"outcome": "open"}, "approved or declined"),
+        ({"outcome": "maybe"}, "outcome must be one of"),
+        ({"outcome": "approved", "by": "Salma"}, "unknown field(s): by"),
+    ],
+)
+def test_invalid_decisions_are_rejected(service, placements, payload, complaint):
+    request = _ask(placements, _animal_in(service, S.AVAILABLE))
+    with pytest.raises(ValidationError, match=re.escape(complaint)):
+        placements.decide(request.id, payload)
+
+
+def test_requests_are_listed_and_filtered(service, placements):
+    animal_id = _animal_in(service, S.AVAILABLE)
+    first, second = _ask(placements, animal_id), _ask(placements, animal_id, K.FOSTER)
+    placements.decide(first.id, {"outcome": "declined"})
+
+    assert [r.id for r in placements.list_requests()] == [first.id, second.id]
+    assert [r.id for r in placements.list_requests("open")] == [second.id]
+    with pytest.raises(ValidationError):
+        placements.list_requests("lost")
+
+
+def test_unknown_request_or_animal(service, placements):
+    with pytest.raises(RequestNotFound):
+        placements.decide(999, {"outcome": "approved"})
+    with pytest.raises(AnimalNotFound):
+        _ask(placements, 999)
