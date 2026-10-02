@@ -18,7 +18,9 @@ from domains.animals.models import (
     MedicalRecordType,
     NewAnimal,
     NewMedicalRecord,
+    NewOfflineAdoption,
     NewPlacementRequest,
+    OfflineAdoption,
     PlacementRequest,
     PlacementStatus,
     RequestKind,
@@ -160,6 +162,12 @@ class AnimalRepository(Protocol):
 
     def count_by_status(self) -> dict[PlacementStatus, int]: ...
 
+    def add_offline_adoption(self, adoption: NewOfflineAdoption) -> OfflineAdoption: ...
+
+    def offline_adoptions(self) -> list[OfflineAdoption]: ...
+
+    def offline_adoption_total(self) -> int: ...
+
     def change_status(
         self,
         animal_id: int,
@@ -222,6 +230,20 @@ class AnimalService:
         homes" figure is the ADOPTED count, read live rather than typed in."""
         counts = self._repository.count_by_status()
         return {status: counts.get(status, 0) for status in PlacementStatus}
+
+    def homes_found(self) -> int:
+        """Animals adopted through the site plus adoptions staff recorded from
+        outside it. Every part of the figure is an entered record."""
+        adopted_here = self._repository.count_by_status().get(PlacementStatus.ADOPTED, 0)
+        return adopted_here + self._repository.offline_adoption_total()
+
+    def record_offline_adoption(self, payload: Any) -> OfflineAdoption:
+        return self._repository.add_offline_adoption(
+            NewOfflineAdoption.from_payload(payload, self._today())
+        )
+
+    def offline_adoptions(self) -> list[OfflineAdoption]:
+        return self._repository.offline_adoptions()
 
     def get(self, animal_id: int) -> Animal:
         animal = self._repository.get(animal_id)

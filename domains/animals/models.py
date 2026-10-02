@@ -26,6 +26,10 @@ REASON_MAX = 500
 APPLICANT_NAME_MAX = 120
 EMAIL_MAX = 254  # the longest address the email standards allow
 MESSAGE_MAX = 2000
+# One offline entry can cover many adoptions (the years before the site), but
+# not an absurd number typed by mistake.
+MAX_OFFLINE_ADOPTIONS = 10_000
+NOTE_MAX = 500
 
 # The adoption form has a field people never see. Bots fill in every field
 # they find, so a value here marks the request as spam (see is_honeypot).
@@ -222,6 +226,36 @@ class StatusMove:
     expected: PlacementStatus
     new: PlacementStatus
     reason: str | None
+
+
+@dataclass(frozen=True)
+class OfflineAdoption:
+    """Adoptions arranged in person and recorded by staff as a dated count."""
+
+    id: int
+    animal_count: int
+    adopted_on: date
+    note: str | None
+
+
+@dataclass(frozen=True)
+class NewOfflineAdoption:
+    animal_count: int
+    adopted_on: date
+    note: str | None
+
+    @classmethod
+    def from_payload(cls, payload: Any, today: date) -> NewOfflineAdoption:
+        fields = _fields(payload, required={"animal_count", "adopted_on"}, optional={"note"})
+        count = fields["animal_count"]
+        # bool is a subclass of int in Python, so True would otherwise pass as 1.
+        if isinstance(count, bool) or not isinstance(count, int) or not 1 <= count <= MAX_OFFLINE_ADOPTIONS:
+            raise ValidationError(f"animal_count must be a whole number from 1 to {MAX_OFFLINE_ADOPTIONS}")
+        return cls(
+            animal_count=count,
+            adopted_on=_past_date(fields, "adopted_on", today),
+            note=_optional_text(fields, "note", NOTE_MAX),
+        )
 
 
 def is_honeypot(payload: Any) -> bool:

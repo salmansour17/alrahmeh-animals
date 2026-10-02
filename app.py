@@ -30,6 +30,9 @@ from domains.donations.repository import SqliteDonationRepository
 from domains.donations.payments import StripeGateway
 from domains.donations.routes import create_donations_blueprint
 from domains.donations.service import DonationService, PaymentGateway
+from domains.enquiries.repository import SqliteEnquiryRepository
+from domains.enquiries.routes import create_enquiries_blueprint
+from domains.enquiries.service import EnquiryService
 from security import require_admin
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
@@ -118,6 +121,9 @@ def create_app(config: Config | None = None) -> Flask:
         gateway=_payment_gateway(config),
     )
     app.register_blueprint(create_donations_blueprint(donation_service))
+    app.register_blueprint(
+        create_enquiries_blueprint(EnquiryService(SqliteEnquiryRepository(database)))
+    )
 
     app.register_error_handler(HTTPException, _json_http_error)
     _register_meta_routes(app)

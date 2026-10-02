@@ -107,7 +107,28 @@ def test_non_json_body_is_a_validation_error_not_a_crash(client):
 def test_placement_stats_are_public(client):
     response = client.get("/api/animals/stats")
     assert response.status_code == 200
-    assert response.get_json() == {"available": 0, "fostering": 0, "pending": 0, "adopted": 0}
+    assert response.get_json() == {
+        "available": 0, "fostering": 0, "pending": 0, "adopted": 0, "homes_found": 0,
+    }
+
+
+def test_offline_adoptions_are_staff_only_and_count_towards_homes_found(client):
+    entry = {"animal_count": 300, "adopted_on": "2026-09-30", "note": "Before the website"}
+    assert client.post("/api/animals/offline-adoptions", json=entry).status_code == 401
+    assert client.get("/api/animals/offline-adoptions").status_code == 401
+
+    recorded = client.post("/api/animals/offline-adoptions", json=entry, headers=STAFF)
+    assert recorded.status_code == 201
+    animal_id = _admit(client)
+    for step in ("pending", "adopted"):
+        client.post(f"/api/animals/{animal_id}/transitions", json={"to": step}, headers=STAFF)
+
+    stats = client.get("/api/animals/stats").get_json()
+    assert (stats["adopted"], stats["homes_found"]) == (1, 301)
+    listed = client.get("/api/animals/offline-adoptions", headers=STAFF).get_json()["offline_adoptions"]
+    assert listed == [{**entry, "id": recorded.get_json()["id"]}]
+    bad = client.post("/api/animals/offline-adoptions", json={**entry, "animal_count": 0}, headers=STAFF)
+    assert bad.status_code == 400
 
 
 # --- adoption and foster requests over HTTP ---------------------------------

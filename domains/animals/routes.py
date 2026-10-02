@@ -16,6 +16,7 @@ from flask import Blueprint, Response, jsonify, request
 from domains.animals.models import (
     Animal,
     MedicalRecord,
+    OfflineAdoption,
     PlacementRequest,
     StatusChange,
     ValidationError,
@@ -103,8 +104,19 @@ def create_animals_blueprint(
 
     @bp.get("/stats")
     def placement_stats():
-        counts = service.placement_counts()
-        return jsonify({status.value: count for status, count in counts.items()})
+        counts = {status.value: count for status, count in service.placement_counts().items()}
+        return jsonify({**counts, "homes_found": service.homes_found()})
+
+    @bp.get("/offline-adoptions")
+    @require_admin
+    def list_offline_adoptions():
+        return jsonify(offline_adoptions=[_offline(a) for a in service.offline_adoptions()])
+
+    @bp.post("/offline-adoptions")
+    @require_admin
+    def record_offline_adoption():
+        adoption = service.record_offline_adoption(request.get_json(silent=True))
+        return jsonify(_offline(adoption)), 201
 
     @bp.get("/<int:animal_id>")
     def get_animal(animal_id: int):
@@ -206,6 +218,15 @@ def _request(placement: PlacementRequest) -> dict:
         "message": placement.message,
         "outcome": placement.outcome.value,
         "submitted_at": placement.submitted_at,
+    }
+
+
+def _offline(adoption: OfflineAdoption) -> dict:
+    return {
+        "id": adoption.id,
+        "animal_count": adoption.animal_count,
+        "adopted_on": adoption.adopted_on.isoformat(),
+        "note": adoption.note,
     }
 
 

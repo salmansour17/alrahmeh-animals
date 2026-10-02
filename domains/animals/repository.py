@@ -21,7 +21,9 @@ from domains.animals.models import (
     MedicalRecordType,
     NewAnimal,
     NewMedicalRecord,
+    NewOfflineAdoption,
     NewPlacementRequest,
+    OfflineAdoption,
     PlacementRequest,
     PlacementStatus,
     RequestKind,
@@ -93,6 +95,33 @@ class SqliteAnimalRepository:
                 "SELECT status, COUNT(*) AS animals FROM animals GROUP BY status"
             ).fetchall()
         return {PlacementStatus(row["status"]): row["animals"] for row in rows}
+
+    def add_offline_adoption(self, adoption: NewOfflineAdoption) -> OfflineAdoption:
+        with self._database.unit_of_work() as connection:
+            cursor = connection.execute(
+                "INSERT INTO offline_adoptions (animal_count, adopted_on, note) VALUES (?, ?, ?)",
+                (adoption.animal_count, adoption.adopted_on.isoformat(), adoption.note),
+            )
+            new_id = cursor.lastrowid
+        return OfflineAdoption(new_id, adoption.animal_count, adoption.adopted_on, adoption.note)
+
+    def offline_adoptions(self) -> list[OfflineAdoption]:
+        with self._database.unit_of_work() as connection:
+            rows = connection.execute(
+                "SELECT id, animal_count, adopted_on, note FROM offline_adoptions "
+                "ORDER BY adopted_on DESC, id DESC"
+            ).fetchall()
+        return [
+            OfflineAdoption(row["id"], row["animal_count"], date.fromisoformat(row["adopted_on"]), row["note"])
+            for row in rows
+        ]
+
+    def offline_adoption_total(self) -> int:
+        with self._database.unit_of_work() as connection:
+            row = connection.execute(
+                "SELECT COALESCE(SUM(animal_count), 0) AS total FROM offline_adoptions"
+            ).fetchone()
+        return row["total"]
 
     def change_status(
         self,
