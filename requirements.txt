@@ -2,6 +2,8 @@
 flask==3.1.0
 # Test-mode card donations; imported only by domains/donations/payments.py
 stripe==15.6.1
+# Re-encodes uploaded animal photos (strips GPS metadata); used only by domains/animals/photos.py
+pillow==12.3.0
 
 # Test tooling
 pytest==8.3.4
