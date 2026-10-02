@@ -26,6 +26,7 @@ from domains.animals.models import (
     StatusChange,
     StatusMove,
     TransitionRequest,
+    ValidationError,
     is_honeypot,
     parse_outcome,
     parse_status,
@@ -121,6 +122,31 @@ class RequestConflict(RuntimeError):
 
     def __init__(self, request_id: int) -> None:
         super().__init__(f"request {request_id} or its animal changed meanwhile; reload and try again")
+
+
+class InvalidPhoto(ValidationError):
+    """An upload that is not a usable image of the type it claims to be."""
+
+
+class UnsupportedPhotoType(ValueError):
+    def __init__(self, content_type: str) -> None:
+        super().__init__("send the photo as image/jpeg, image/png or image/webp")
+        self.content_type = content_type
+
+
+class PhotoNotFound(LookupError):
+    def __init__(self, animal_id: int) -> None:
+        super().__init__(f"no photo for animal {animal_id}")
+
+
+class PhotoStore(Protocol):
+    """Where animal photos are kept. The service never touches files itself."""
+
+    def save(self, animal_id: int, photo: bytes) -> None: ...
+
+    def load(self, animal_id: int) -> bytes | None: ...
+
+    def version(self, animal_id: int) -> int | None: ...
 
 
 class AnimalRepository(Protocol):
@@ -313,3 +339,47 @@ class PlacementService:
         if request is None:
             raise RequestNotFound(request_id)
         return request
+
+
+class PhotoService:
+    """One photo per animal: staff upload, the public views.
+
+    Turning an upload into a safe image is someone else's job: `prepare` is
+    injected by create_app (domains/animals/photos.py), so this class never
+    imports an image library and tests can pass a trivial stand-in.
+    """
+
+    def __init__(
+        self,
+        animals: AnimalService,
+        store: PhotoStore,
+        prepare: Callable[[bytes, str], bytes],
+    ) -> None:
+        self._animals = animals
+        self._store = store
+        self._prepare = prepare
+
+    def upload(self, animal_id: int, data: bytes, content_type: str) -> str:
+        """Store a new photo for an animal and return its public address."""
+        self._animals.get(animal_id)
+        self._store.save(animal_id, self._prepare(data, content_type))
+        return self.photo_url(animal_id)
+
+    def photo(self, animal_id: int) -> bytes:
+        self._animals.get(animal_id)
+        photo = self._store.load(animal_id)
+        if photo is None:
+            raise PhotoNotFound(animal_id)
+        return photo
+
+    def version(self, animal_id: int) -> int | None:
+        return self._store.version(animal_id)
+
+    def photo_url(self, animal_id: int) -> str | None:
+        """The photo's address, with its version, so a replaced photo is never
+        served from a browser's cache. None when there is no photo yet."""
+        version = self._store.version(animal_id)
+        if version is None:
+            return None
+        return f"/api/animals/{animal_id}/photo?v={version}"
+
