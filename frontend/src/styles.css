@@ -166,6 +166,66 @@ li:nth-child(3n) .card .photo { background: var(--coral-soft); }
 }
 .button:hover { background: #a9442e; transform: translateY(-2px); }
 
+/* --- header extras ------------------------------------------------------ */
+
+.arabic { font-family: "Noto Naskh Arabic", "Noto Sans Arabic", "Segoe UI", Tahoma, sans-serif; font-weight: 700; }
+.brand .arabic { font-size: 0.85rem; color: var(--teal); margin-top: 0.1rem; }
+.site-footer .arabic { margin: 0.25rem 0 0; }
+.site-header nav { align-items: center; }
+.site-header nav a.nav-donate { background: var(--coral-deep); color: #fff; display: inline-flex; gap: 0.35rem; align-items: center; }
+.site-header nav a.nav-donate:hover, .site-header nav a.nav-donate.active { background: #a9442e; color: #fff; }
+
+/* --- homepage ----------------------------------------------------------- */
+
+.hero-home { grid-template-columns: 1fr; text-align: left; }
+.hero-home .hero-text { max-width: 640px; }
+.actions { display: flex; flex-wrap: wrap; gap: 0.75rem; margin-top: 1.25rem; }
+.button.button-soft { background: var(--paper); color: var(--coral-deep); border: 2px solid var(--coral); display: inline-flex; align-items: center; gap: 0.4rem; justify-self: start; }
+.button.button-soft:hover { background: var(--coral-soft); color: var(--coral-deep); }
+.section-title { color: var(--teal); font-size: 1.6rem; margin: 2.5rem 0 1rem; }
+.counters { list-style: none; padding: 0; margin: 0; display: grid; gap: 1rem; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
+.counter { background: var(--paper); border-radius: var(--round); padding: 1.4rem; box-shadow: var(--shadow); display: grid; gap: 0.3rem; }
+.counter strong { font-family: var(--heading); font-size: 2.2rem; font-weight: 800; color: var(--coral-deep); line-height: 1.1; }
+.counter-icon { color: var(--sage); }
+.small { font-size: 0.9rem; }
+.center { text-align: center; }
+
+/* --- forms ------------------------------------------------------------------ */
+
+.form, .donate { display: grid; gap: 1rem; }
+.donate { background: var(--paper); border-radius: var(--round); padding: 1.5rem; box-shadow: var(--shadow); max-width: 760px; }
+fieldset { border: 0; padding: 0; margin: 0; display: grid; gap: 0.75rem; }
+legend { font-family: var(--heading); font-weight: 800; font-size: 1.15rem; margin-bottom: 0.5rem; }
+label { display: grid; gap: 0.35rem; font-weight: 600; }
+label.inline { max-width: 260px; }
+input, textarea {
+  font: inherit; padding: 0.65rem 0.85rem; border: 2px solid var(--sand); border-radius: 14px; background: var(--paper);
+  transition: border-color 0.2s;
+}
+input:focus, textarea:focus { outline: none; border-color: var(--sage); }
+button:disabled { opacity: 0.6; cursor: progress; }
+.button { border: 0; cursor: pointer; font: inherit; font-family: var(--heading); font-weight: 800; }
+.button-big { font-size: 1.1rem; padding: 0.9rem 1.6rem; justify-self: start; }
+.purposes { display: grid; gap: 0.75rem; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); }
+.purpose {
+  display: grid; gap: 0.35rem; text-align: left; font: inherit; cursor: pointer; color: var(--ink);
+  background: var(--cream); border: 2px solid var(--sand); border-radius: 18px; padding: 1rem;
+  transition: border-color 0.2s, transform 0.2s;
+}
+.purpose .icon { color: var(--sage); }
+.purpose span { color: var(--muted); font-size: 0.92rem; }
+.purpose:hover { transform: translateY(-2px); border-color: var(--sage); }
+.purpose.active { border-color: var(--teal); background: var(--sage-soft); }
+.earmark { margin: 0; }
+.earmark .icon { color: var(--coral-deep); margin-right: 0.35rem; }
+.other-ways { max-width: 760px; }
+.other-ways code { background: var(--cream); padding: 0.1rem 0.4rem; border-radius: 6px; }
+.thanks .icon { color: var(--coral); }
+
+/* The bot trap: off-screen, not merely invisible, so it takes no space and
+   assistive technology is told to skip it (aria-hidden on the wrapper). */
+.trap { position: absolute; left: -10000px; width: 1px; height: 1px; overflow: hidden; }
+
 /* --- friendly states ------------------------------------------------------ */
 
 .gentle { display: flex; gap: 0.5rem; align-items: center; justify-content: center; padding: 3rem 1rem; color: var(--muted); font-size: 1.1rem; text-align: center; }
