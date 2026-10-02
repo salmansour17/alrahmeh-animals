@@ -17,9 +17,9 @@ from werkzeug.exceptions import HTTPException
 
 from config import Config, load_config
 from db.connection import Database
-from domains.animals.repository import SqliteAnimalRepository
-from domains.animals.routes import create_animals_blueprint
-from domains.animals.service import AnimalNotFound, AnimalService
+from domains.animals.repository import SqliteAnimalRepository, SqlitePlacementRepository
+from domains.animals.routes import create_animals_blueprint, create_requests_blueprint
+from domains.animals.service import AnimalNotFound, AnimalService, PlacementService
 from domains.donations.repository import SqliteDonationRepository
 from domains.donations.payments import StripeGateway
 from domains.donations.routes import create_donations_blueprint
@@ -98,7 +98,9 @@ def create_app(config: Config | None = None) -> Flask:
     # replacing the adapter with an HTTP call once the domains are separate
     # services, would be a change to these lines alone.
     animal_service = AnimalService(SqliteAnimalRepository(database), today=amman_today)
-    app.register_blueprint(create_animals_blueprint(animal_service))
+    placement_service = PlacementService(SqlitePlacementRepository(database), animal_service)
+    app.register_blueprint(create_animals_blueprint(animal_service, placement_service))
+    app.register_blueprint(create_requests_blueprint(placement_service))
 
     donation_service = DonationService(
         SqliteDonationRepository(database),
