@@ -23,6 +23,7 @@ BIND_HOST = "0.0.0.0"
 DEFAULT_PORT = 8000
 DEFAULT_DATA_DIR = "data"
 DATABASE_FILENAME = "alrahmeh.db"
+PHOTOS_DIRNAME = "photos"
 # Where donors are sent back to after Stripe Checkout. Local development
 # default; a deployment sets PUBLIC_BASE_URL to its real address.
 DEFAULT_PUBLIC_BASE_URL = "http://localhost:8000"
@@ -54,6 +55,12 @@ class Config:
     def database_path(self) -> Path:
         """The single documented location of the SQLite file."""
         return self.data_dir / DATABASE_FILENAME
+
+    @property
+    def photos_dir(self) -> Path:
+        """Animal photos live beside the database, so DATA_DIR stays the one
+        folder a deployment has to keep."""
+        return self.data_dir / PHOTOS_DIRNAME
 
 
 def load_config() -> Config:

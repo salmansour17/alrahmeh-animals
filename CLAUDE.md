@@ -44,14 +44,17 @@ hashing — one shared secret is all this organisation needs, and it keeps ADR-1
 closed with 503; never add a default password. Per-staff accounts are a
 deliberate omission argued in the README and the report (not an ADR).
 
-Every write endpoint in either domain gets `@require_admin`, with exactly two
-exceptions, both in the Stripe payment flow: `POST /api/donations/checkout` is
+Every write endpoint in either domain gets `@require_admin`, with exactly three
+exceptions. Two are in the Stripe payment flow: `POST /api/donations/checkout` is
 public because donors are not staff; it validates the amount against
 server-side bounds and writes nothing to the ledger. `POST
 /api/donations/stripe/webhook` is authenticated by verifying the
 `Stripe-Signature` header against `STRIPE_WEBHOOK_SECRET` over the raw request
-body, and answers 400 to anything that fails. No other write endpoint may be
-unauthenticated.
+body, and answers 400 to anything that fails. The third (added 2026-10-02) is
+`POST /api/animals/<id>/requests`, the adoption and foster form that replaces
+the Google Forms: applicants are the public. It only creates an open request and
+never changes an animal's status; only a staff decision does that. No other
+write endpoint may be unauthenticated.
 
 ## Payments (Stripe)
 
@@ -107,12 +110,15 @@ Dependency Inversion on a real external integration. It reverses the earlier
   `.github/workflows/`, or any Terraform/Bicep/ARM file. These are explicitly
   forbidden and would cost me marks.
 - No Redis, RabbitMQ, Celery, cron, or any external database, cache or queue.
-- Keep declared dependencies under 12 across both manifests. Currently 8
-  planned; `stripe` makes it 9.
+- Keep declared dependencies under 12 across both manifests. Currently 10
+  (flask, stripe, pytest, pytest-cov; react, react-dom, react-router-dom,
+  @fontsource/nunito, vite, @vitejs/plugin-react); Pillow for photo uploads
+  makes it 11.
 - Keep the file count between 15 and 50, excluding lockfiles, `.venv` and
   `node_modules`. The assignment calls this rough guidance; the final count may
   land a couple over 50 once `static/dist` is committed, which I accepted on
-  2026-10-01. Don't split every button into its own component file.
+  2026-10-01, and on 2026-10-02 I accepted a projected final count of 53.
+  Don't split every button into its own component file.
 
 ## The two feature domains
 
@@ -127,6 +133,16 @@ history. A placement lifecycle with guarded transitions:
 `available → fostering → pending → adopted`. Fostering is central to how this
 organisation actually operates, so it is a first-class state, not an
 afterthought.
+
+Adoption and foster **requests** (`placement_requests`) are how the public asks,
+and a staff decision on one is what moves an animal. Approving an adoption moves
+it to `pending`, approving a foster request to `fostering`, always through
+`check_transition`. At most one adoption is approved at a time. Declining an
+open request changes only that request; declining the approved adoption (it
+fell through) returns the animal to `available`, and backup requests stay open.
+Reaching `adopted` declines every remaining open request. Each decision and the
+status change it causes land in one transaction. Applicants' names, emails and
+messages are staff-only and never logged.
 
 **2. Donation and impact ledger** (`domains/donations/`)
 Append-only donation records against a purpose: medical fund, food fund, or

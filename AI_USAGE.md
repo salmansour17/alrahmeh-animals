@@ -24,6 +24,7 @@ the same number below the table.
 | 2026-09-29 / `chore/stripe-scope` (step 1 of 3) | Claude Code (Opus 5.5) | "My professor has now asked me to integrate Stripe as well, so I can show more SOLID and design-pattern work. This reverses a decision in CLAUDE.md. Before editing, tell me every place this conflicts with CLAUDE.md or assignment_1.md. … Then edit CLAUDE.md only (no Stripe code today)." Full prompt: [the prompt for 2026-09-29](#prompt-for-2026-09-29-verbatim). | Modified | Found conflicts I had not listed: the public checkout endpoint is a second `@require_admin` exception, not just the webhook; a new `donations` column would not reach an existing database because `CREATE TABLE IF NOT EXISTS` never alters a table; and Stripe may not onboard businesses based in Jordan. I accepted per-staff accounts as ADR-5 and "refuse to charge" instead of "refuse to start" on an `sk_live_` key. I rejected the proposed AI_USAGE rule and set my own: one separate `AI_USAGE.md` commit at the end of each session, after I write my column. No code; CLAUDE.md only. | [Explanation 6](#explanation-6-bringing-stripe-into-scope) |
 | 2026-09-29 / `feat/animal-intake-adoption` (step 2 of 3) | Claude Code (Opus 5.5) | "STEP 2: feat/animal-intake-adoption … Before coding, show me this proposed transition table and let me confirm it … parametrize over ALL 16 (from, to) pairs, so every allowed transition succeeds and every rejected one raises … ADR-2 in ADR.md: how the domains stay independently modularizable." Full prompt: [the prompt for 2026-09-29](#prompt-for-2026-09-29-verbatim). | Modified | I confirmed the transition table as proposed. I chose to add a `status_changes` table (history written in the same transaction as the race-safe UPDATE), public GETs showing vaccinations only, and placement requests deferred to the frontend days. I rejected two of its first drafts on review against my own rules: f-strings building SELECT column lists in `repository.py` (constants, but my rule is no f-strings in SQL at all), and an `import sqlite3` in the repository that broke `db/connection.py`'s claim to be the only importer. Result: 76 tests, 100% coverage on `domains/animals`; boundary test shown failing on a planted import. | [Explanation 7](#explanation-7-the-animal-intake-and-adoption-domain) |
 | 2026-09-30 / `feat/donation-impact-ledger` | Claude Code (Opus 5.5) | "This is the second feature domain and the data behind the homepage counters (audit fix #1: numbers computed from real data at request time, never hardcoded). … BEFORE WRITING ANY CODE: confirm these decisions with me … Checking earmarked animals: donations declares a one-method AnimalDirectory Protocol (exists(animal_id) -> bool). create_app adapts AnimalService to it with a small adapter at the composition root, inside neither domain package." Full prompt: [the prompt for 2026-09-30](#prompt-for-2026-09-30-verbatim). | Modified | Before coding it found that my amount regex `^\d{1,5}(\.\d{1,3})?$` accepts Arabic-Indic digits (`٢٥` parses as 25) and a trailing newline; I accepted the fix (`[0-9]` with `fullmatch`) and it proved the test catches the `\d` version. It also found the schema already has `received_at` (no schema change needed) but no `note` column (dropped), and that `earmarked_animal_id` has no foreign key by design (ADR-3). I chose all its recommendations: append-only triggers in SQLite, `/api/animals/stats` today, and "today" meaning Amman (fixed UTC+3), now injected into both services. Result: 160 tests, 100% coverage on both domains, the boundary test green in both directions, ADR-4 written. | The donations domain declares a one-method Protocol, `AnimalDirectory.exists(animal_id) -> bool`, and depends only on that. In `create_app`, `AnimalDirectoryAdapter` wraps `AnimalService`: `exists` calls `AnimalService.get` and returns False when a "not found" error is raised. That is the Adapter pattern, and the only place that knows both domains; in tests a small fake with a fixed set of IDs replaces it. Money is stored as integer fils because floats can't represent most decimal amounts exactly (0.1 + 0.2 gives 0.30000000000000004) and the errors build up across the ledger's SUM. It arrives as the string `amount_jod` because a JSON number would already be a float before my code saw it; the text is checked against a strict pattern, converted with `Decimal` and multiplied by 1,000. Full explanation: [Explanation 8](#explanation-8-the-donation-and-impact-ledger). |
+| 2026-10-01 / `feat/stripe-donations`, `feat/react-frontend` | Claude Code (Opus 5.5) | "SECRETS RULE, which overrides everything else today: never ask me to paste a key, never print, echo, log or write any value of STRIPE_SECRET_KEY or STRIPE_WEBHOOK_SECRET. … If JOD is NOT accepted, STOP. We decide together, because a second currency would break the fils-only SUM in the ledger. … PATTERN HONESTY TABLE … I must only claim what's really there." Full prompt: [the prompt for 2026-10-01](#prompt-for-2026-10-01-verbatim). | Modified | The JOD test failed: my Stripe test account cannot charge JOD at all, which overturned decisions 3 and 9 (JOD currency, 10-fils step). On its recommendation I chose to charge USD at the Central Bank of Jordan's fixed peg (709 fils per dollar), converted inside the Stripe adapter, with what Stripe actually charged kept in a new `stripe_payments` table as the audit trail; the ledger stays in fils. My own CLI test showed Stripe's real minimum is EUR 0.50 (the account settles in EUR), so `MIN_CHECKOUT_FILS` stays at 0.500 JOD as a margin. Gaps A and B as it recommended: a gift for a vanished animal is recorded as given with a warning; a charge that can't be expressed in fils is logged for staff and not recorded. It reordered my commits because the adapter imports the service's types (the consumer owns the interface), moved the fake gateway into the tests, also hid `admin_password` from `Config`'s repr, and switched off Stripe Adaptive Pricing after seeing it enabled in the live event. Live run: real test payment recorded once as 25.503 JOD for USD 35.97; a real resend of the same event answered 200 and added no row; forged signature 400; no keys and a dummy live key both 503 with no key material in the logs. 232 tests, 100% coverage. ADR-5 written; one sentence of ADR-4 corrected. Frontend (branch pushed, merges Oct 2): Vite + React at the repo root building into static/dist, Flask serving it with a fallback so React Router URLs reload while unknown /api paths stay JSON 404s. I rejected its first plain styling and asked for a warm, friendly design with animal photos; it built the restyle but flagged that no photos exist in the system, and I chose a staff photo-upload endpoint for Oct 2 (drawn species portraits until then) and a self-hosted Nunito font instead of Google Fonts (which would send visitors' IPs to Google). | `POST /api/donations/checkout` validates the request and asks `StripeGateway` for a payment page; nothing is written until Stripe sends a signed `checkout.session.completed` event to `/api/donations/stripe/webhook`. The signature is an HMAC-SHA256 of the timestamp and the exact body bytes under the shared `whsec_` secret, which is why the raw bytes are read before any JSON parsing. A replay can't count twice: `session_id` is UNIQUE, the payment insert uses `ON CONFLICT DO NOTHING`, and `_AlreadyRecorded` rolls back the donation row in the same transaction. The ledger records the verified `amount_total` because that is money that really moved; 25.500 JOD became $35.97 and came back as 25.503 JOD at the 709-fils peg. `StripeGateway` is the Adapter and the `PaymentGateway` Protocol lives in `service.py` (Dependency Inversion). Full explanation: [Explanation 9](#explanation-9-stripe-card-donations-and-the-start-of-the-react-frontend). |
 
 ---
 
@@ -596,6 +597,407 @@ The boundary test still passed in both directions, and the work was committed in
 separate logical steps: models, repository, service and tests, routes and
 wiring, the animal statistics endpoint, README coverage, then ADR-4.
 
+## Explanation 9: Stripe card donations and the start of the React frontend
+
+On 1 October I added online card donations to the donation domain and started
+the React frontend. The card work was built on `feat/stripe-donations` (7
+commits, merged through a pull request). The frontend was started on
+`feat/react-frontend` (4 commits, pushed, merging on 2 October).
+
+Before writing any payment code, I tested what my Stripe account could actually
+do. That test changed the design: Stripe could not charge in Jordanian dinars at
+all. The rest of this section explains how I handled that without breaking the
+ledger's rule that every amount is stored in fils.
+
+### Preparation and the currency problem
+
+I created a Stripe account in test mode, where no real money moves. I installed
+the Stripe command-line tool after checking its SHA-256 checksum (a fingerprint
+of the file) against the one Stripe publishes, which confirmed the download
+hadn't been tampered with. I entered my secret keys through a `Read-Host`
+prompt, so they never reached PowerShell's history file. I only ever checked
+them by their prefix (`sk_test_`), and the AI assistant never saw them.
+
+The currency test failed. My account, registered in Spain, could not charge in
+JOD or in any other currency with three decimal places. A second test showed
+the real minimum charge is €0.50, because a Spanish account settles in euros.
+
+I considered three options:
+
+| Option | Outcome |
+|---|---|
+| Charge in US dollars and convert at the Central Bank of Jordan's fixed rate (1 USD = 709 fils, unchanged since 1995) | **Chosen** |
+| Store several currencies in the ledger | Rejected: a large redesign, and the totals would no longer be a simple sum |
+| Charge in euros | Rejected: the euro's rate against the dinar changes daily, so any fixed rate would be made up |
+
+The conversion happens only inside the Stripe adapter, so the ledger still
+stores whole fils, as ADR-3 requires. For a full audit trail, the exact amount
+and currency Stripe charged are saved next to each card donation.
+
+### What was built: Stripe donations
+
+**Configuration (`config.py`).** Three new settings are read from the
+environment:
+
+- `stripe_secret_key` and `stripe_webhook_secret`, which have no default values;
+- `public_base_url`, which must be a bare address such as
+  `https://example.org`. An invalid value switches payments off instead of
+  guessing.
+
+Secret fields are hidden from the configuration's printed form. While adding
+this, I found and fixed an existing leak: the admin password used to appear
+whenever the configuration object was printed.
+
+**Dependency.** `stripe==15.6.1` was added to `requirements.txt`, pinned to the
+exact version installed.
+
+**Database (`schema.sql`).** A new table, `stripe_payments`, links each card
+payment to its ledger row. It stores the Stripe session ID (unique), the
+donation ID (also unique), and the amount and currency actually charged. I
+added a new table instead of new columns because `CREATE TABLE IF NOT EXISTS`
+never modifies a table that already exists, so new columns would never reach
+existing databases.
+
+**Models (`models.py`).**
+
+- `CheckoutRequest.from_payload` validates a donor's request by reusing the
+  existing amount, purpose and earmark checks. It adds a minimum of 500 fils
+  (`MIN_CHECKOUT_FILS`), which keeps every charge above Stripe's €0.50 minimum.
+- Three new types describe payments without mentioning Stripe:
+  `CheckoutSession`, `ProviderCharge` and `PaymentConfirmed`. If a charge can't
+  be converted to fils, `PaymentConfirmed.amount_fils` is empty (`None`).
+
+**Repository (`repository.py`).** `add_paid` saves a card donation in one
+transaction:
+
+1. it inserts the donation row;
+2. it inserts the payment row with `ON CONFLICT (session_id) DO NOTHING`;
+3. if the payment row wasn't inserted, it raises a private `_AlreadyRecorded`
+   error, which cancels the whole transaction, donation row included.
+
+Staff-recorded and card donations share a single insert function,
+`_insert_donation`, so there is one way to add a row to the ledger.
+
+**Service (`service.py`).**
+
+- The `PaymentGateway` Protocol is defined here, owned by the service. It has
+  two methods: `create_checkout` and `verify_event`.
+- New errors and outcomes: `PaymentsUnavailable`, `InvalidWebhookSignature`,
+  `PaymentProviderError` and the `WebhookOutcome` enumeration.
+- `start_checkout` validates the request, checks the earmarked animal, asks the
+  gateway for a payment page and writes nothing to the ledger.
+- `handle_webhook` has the gateway verify the incoming message, then records the
+  payment.
+- Two edge cases are handled deliberately:
+  - **Gap A:** a donation earmarked for an animal that no longer exists is still
+    recorded, and a warning is logged.
+  - **Gap B:** a payment that can't be expressed in fils, is outside the allowed
+    range, or has an unknown purpose is marked `NEEDS_RECONCILIATION`. Nothing
+    is recorded, and only the session ID is logged.
+
+**Stripe adapter (`payments.py`).** This is the only file that imports the
+Stripe library, and a test enforces that.
+
+- `StripeGateway.create_checkout` asks Stripe for a card-only, one-off payment
+  in US dollars. It converts the fils amount to cents, attaches the purpose,
+  earmark and donor name as metadata, and builds the return addresses from
+  `PUBLIC_BASE_URL`.
+- It switches off Stripe's Adaptive Pricing, which could otherwise show the
+  donor a different currency.
+- It sends the secret key with each request rather than setting it globally.
+- `verify_event` checks the webhook signature with a 300-second time window and
+  ignores everything except a completed, paid checkout. It converts cents back
+  into fils using whole-number rounding.
+
+**Routes (`routes.py`).** There are two public endpoints, each commented as one
+of the only two exceptions to `@require_admin`:
+
+- `POST /api/donations/checkout` accepts JSON only;
+- `POST /api/donations/stripe/webhook` reads the raw request bytes before
+  anything parses them.
+
+Errors map to 400 (bad input or bad signature), 503 (payments unavailable) and
+502 (Stripe unreachable).
+
+**Wiring (`app.py`).** `_payment_gateway(config)` decides whether payments are
+enabled. It refuses live keys and missing keys, logs the reason without ever
+logging a key, and returns `None` in those cases. Request bodies are limited to
+64 KiB.
+
+**ADRs.** ADR-5 now records the regional-gateway decision. One sentence in
+ADR-4 was corrected, because the real Stripe adapter is now tested directly, not
+only through a fake.
+
+### Testing and verification
+
+The test suite has 232 tests with 100% coverage of the measured code. Webhook
+messages are signed locally with a dummy secret, so no network is needed.
+Stripe's session creation is replaced with a stand-in during tests, and a test
+checks that only `payments.py` imports the Stripe library.
+
+The live run confirmed the whole flow:
+
+- A test payment with card 4242 4242 4242 4242 charged $35.97, which was
+  recorded once as 25.503 JOD.
+- Resending the same Stripe event returned 200 and added no second row.
+- A forged signature was rejected with 400.
+- With no keys, and with a dummy live key, the payment endpoints returned 503,
+  and no key appeared in the logs.
+- The live event showed Adaptive Pricing was still on, so I switched it off.
+
+### Frontend: the first four commits
+
+- **Build setup.** `package.json` and its lockfile sit at the repository root,
+  and `vite.config.js` builds `frontend/` into `static/dist`. During
+  development, `/api` requests are forwarded to Flask. There are now 10 declared
+  dependencies, under the limit of 12.
+- **Serving.** `_register_frontend_routes` in `app.py` does three things:
+  - serves real build files;
+  - returns `index.html` for any other address not starting with `/api`;
+  - returns a JSON 404 for unknown `/api` addresses.
+
+  Files are served with `send_from_directory`, so nothing outside the build
+  folder can be read. The `.woff2` font type is registered so browsers accept
+  the font files.
+- **API client.** `api.js` is the only code that calls `fetch`. It turns every
+  failure into one `ApiError` type and provides a `useApi` hook for the pages.
+- **Visual design.**
+  - `art.jsx` holds line icons and drawn species portraits.
+  - `animals.jsx` holds the list, filter chips, cards, profile page and friendly
+    status sentences.
+  - `styles.css` holds a warm palette, soft shapes, hover effects and a
+    reduced-motion setting.
+  - The Nunito font is bundled as two `.woff2` files.
+- **Photos.** A staff photo-upload endpoint is planned for 2 October. Until
+  then, each card shows a drawing of the animal's species.
+
+### Answers to the review questions
+
+#### Card donations
+
+**1. Walk one card donation from the button to the ledger row.**
+
+1. The donor fills in the donate form and presses the button. The browser sends
+   `POST /api/donations/checkout` with the amount, purpose, any earmarked animal
+   and an optional name. (The donate form itself arrives on 2 October; in
+   today's live run the same request was sent directly.)
+2. The server validates the request (`CheckoutRequest.from_payload`), checks the
+   earmark, and asks `StripeGateway` to create a Checkout session. Stripe
+   returns a session ID and a payment-page address. Nothing is written to the
+   ledger yet.
+3. The browser receives that address as JSON and redirects the donor to
+   Stripe's hosted payment page.
+4. The donor enters their card details on Stripe's page, not ours. Card numbers
+   never reach our server, which keeps us out of most card-security
+   obligations.
+5. After payment, Stripe does two separate things:
+   - it sends the donor's browser to `/donate/thanks`, which only ever says
+     thank you and writes nothing;
+   - it sends a `checkout.session.completed` event to
+     `POST /api/donations/stripe/webhook`. During development, `stripe listen`
+     forwarded this event to my local server.
+6. The webhook route passes the raw message to the service. The gateway
+   verifies the signature and converts the event into a `PaymentConfirmed`.
+   `confirm_payment` then calls `add_paid`, which writes the ledger row and the
+   `stripe_payments` row together, and the server answers 200.
+
+**2. How does the webhook prove a message really came from Stripe?**
+Stripe and my server share a secret, the `whsec_...` webhook secret, which
+nobody else knows. For each message, Stripe takes the send time and the exact
+bytes of the body, and computes an HMAC-SHA256 code from them using that secret.
+It sends the time and the code in the `Stripe-Signature` header. My server,
+through `stripe.Webhook.construct_event`, recomputes the code from the bytes it
+received and compares the two. Anyone without the secret can't produce a
+matching code, so a forged message fails. The time is also checked: a message
+more than 300 seconds old is rejected, so a captured message can't be replayed
+much later.
+
+`request.get_data()` must run first because the code covers the exact bytes. If
+the body were parsed as JSON and turned back into text, details such as
+spacing, key order or how special characters are written could change. The
+code would then no longer match, even for a genuine message.
+
+**3. What stops a replayed webhook from counting twice?**
+The `session_id` column in `stripe_payments` is UNIQUE, so the database itself
+won't store the same session twice. `add_paid` inserts the donation first,
+because the payment row needs its ID, and then inserts the payment row with
+`ON CONFLICT (session_id) DO NOTHING`. On a replay, that second insert does
+nothing. The code notices no row was added and raises `_AlreadyRecorded` while
+the transaction is still open. That cancels the whole transaction, so the
+donation row inserted a moment earlier is removed too. The service reports
+"already recorded" and the route answers 200.
+
+Checking first with a SELECT and then inserting would be unsafe because of
+timing. Stripe can deliver the same event twice almost at once. Both requests
+could run the check, both find nothing, and both insert, counting the donation
+twice. Letting the database enforce uniqueness in a single step closes that
+gap.
+
+**4. Why trust `amount_total` from the verified event but never the amount the
+browser asked for?**
+Anything coming from the browser can be changed by whoever controls it, and a
+requested amount is only a request. The donor might never complete the
+payment, or someone could tamper with the request. `amount_total` comes inside
+a message signed by Stripe and states what was actually charged. The ledger is
+a financial record, so it records money that really moved.
+
+**5. You asked to give 25.500 JOD. Why did the ledger record 25.503?**
+The peg is 1 USD = 709 fils, so 1 cent = 7.09 fils.
+
+- Fils to cents (`fils_to_cents`): 25,500 fils × 100 ÷ 709 = 3,596.61 cents,
+  rounded to 3,597 cents = $35.97. Stripe charged this.
+- Cents back to fils (`cents_to_fils`): 3,597 cents × 709 ÷ 100 = 25,502.73
+  fils, rounded to 25,503 fils = 25.503 JOD. The ledger recorded this.
+
+A cent is about seven times coarser than a fil, so converting to cents means
+rounding, and the donor can only be charged a whole number of cents. The ledger
+records what $35.97 is actually worth in fils, not what was asked for. That is
+the honest figure, and the gap is never more than about 3.5 fils.
+
+**6. Why charge in USD, and why is the peg defensible when EUR wouldn't be?**
+I charge in USD because my Stripe account can't charge in JOD or any other
+three-decimal currency. The peg is defensible because the Central Bank of
+Jordan has held the dinar at 0.709 per US dollar since 1995. The rate is
+official, public and unchanged, so the conversion gives the same answer every
+time and an accountant can check it. The euro's rate against the dinar changes
+every day. A fixed euro rate would be one I made up, and a live rate would need
+an outside data service the project doesn't have. For a full audit trail, the
+actual amount and currency charged are also stored in `stripe_payments`.
+
+#### Safety and failure
+
+**7. What happens with no keys, or with an `sk_live_` key?**
+`_payment_gateway(config)` in `app.py` decides this. If the keys are missing,
+or the secret key starts with `sk_live_`, it logs the reason without any part of
+the key and returns `None`, so the service has no gateway. Any payment request
+then raises `PaymentsUnavailable`, which the routes turn into a 503.
+
+The application still starts because a payment problem shouldn't take down
+unrelated features. Animal profiles, homepage counters and staff tools keep
+working, and only card donations are switched off. This is the same fail-closed
+approach as `ADMIN_PASSWORD`, and it meets the requirement that the app starts
+without anyone needing to step in.
+
+**8. Gaps A and B: what happens, and why does the webhook still answer 200?**
+
+- **Gap A, the earmarked animal no longer exists:** the donation is still
+  recorded and a warning is logged for staff. The money has been received, and
+  losing the record of a real donation would be worse than an earmark that no
+  longer points anywhere.
+- **Gap B, the charge can't be expressed in fils, or the amount or purpose is
+  invalid:** nothing is recorded, the outcome is `NEEDS_RECONCILIATION`, and
+  only the session ID is logged. Staff can look up that session in the Stripe
+  dashboard and settle it manually.
+
+Both answer 200 because an error response tells Stripe to try again, and Stripe
+keeps retrying for days. Retrying can't fix either case, since the same event
+would hit the same problem every time. A 200 means "received and handled," and
+the problem goes to staff through the log instead of an endless retry loop.
+
+**9. Why build the success and cancel URLs from `PUBLIC_BASE_URL` and never
+from the Host header?**
+The Host header comes from whoever sends the request, so an attacker can set it
+to anything. If the server built return addresses from it, an attacker could
+create a checkout session whose return address was their own site. A donor sent
+there after paying could see a fake "payment failed, please re-enter your card"
+page. `PUBLIC_BASE_URL` is fixed by whoever runs the server, so donors can only
+ever return to the real site. If it's invalid, payments are switched off rather
+than falling back to the header.
+
+#### Design
+
+**10. Where is the Adapter, what does it translate, and why does the Protocol
+live in `service.py`?**
+The Adapter is `StripeGateway` in `payments.py`. It converts between two
+interfaces that don't match. The service expects a `PaymentGateway` with
+`create_checkout` and `verify_event` that speak in fils and in our own
+dataclasses. Stripe's library offers `stripe.checkout.Session.create` and
+`stripe.Webhook.construct_event`, which speak in US cents and Stripe objects.
+The adapter translates:
+
+- **calls:** our two methods become Stripe's functions;
+- **data:** Stripe objects become `CheckoutSession` and `PaymentConfirmed`;
+- **units:** fils become cents and back again, at the peg;
+- **errors:** Stripe's exceptions become `PaymentProviderError` and
+  `InvalidWebhookSignature`.
+
+`AnimalDirectoryAdapter` from 30 September is a second, separate Adapter.
+
+The Protocol lives in `service.py` because of Dependency Inversion: the code
+that uses an interface should own it. If the Protocol lived in `payments.py`,
+the service would have to import `payments.py`, which imports Stripe. The
+business rules would then depend on Stripe, which is exactly backwards. As
+built, the service depends on nothing outside itself, and the Stripe adapter
+depends on the service's contract.
+
+**11. If the rescue switched to PayTabs, what would change and what would stay
+untouched?**
+
+What changes:
+
+- A new `PayTabsGateway` class implementing `create_checkout` and
+  `verify_event`. PayTabs can probably charge in JOD directly, which would
+  remove the peg conversion.
+- One change in `app.py`, so `_payment_gateway` builds the PayTabs gateway.
+
+Where the code is still tied to Stripe, to be honest about it:
+
+- The configuration fields are named `stripe_secret_key` and
+  `stripe_webhook_secret`. PayTabs uses different credentials (a server key and
+  a profile ID), so new fields would be needed.
+- The table is named `stripe_payments`. Its columns (`charged_amount_minor`,
+  `charged_currency`) are general, but the name isn't, so it would need
+  renaming or a parallel table.
+- The webhook address is `/stripe/webhook`, and PayTabs signs its callbacks
+  differently. The route would need a new path, and I'd need to check whether
+  it reads Stripe's header name directly.
+
+What stays untouched: `DonationService`, the models (`CheckoutSession`,
+`PaymentConfirmed`, `ProviderCharge` were designed not to mention Stripe), the
+ledger, the impact statistics and the animals domain. The business rules don't
+change at all.
+
+**12. Why is the fake gateway in the tests and not in production code?**
+Production should never contain code that can approve a payment without real
+money. If the fake shipped with the application, a configuration mistake could
+switch it on and record donations that never happened. Keeping it in the tests
+means it can't run in production. Because the service depends on the Protocol
+rather than on Stripe, the tests can still pass the fake in without the
+production code knowing it exists.
+
+#### Frontend
+
+**13. Why does reloading `/animals/1` work, while `/api/nope` stays a JSON 404?
+Which function decides that?**
+`_register_frontend_routes` in `app.py`. `/animals/1` isn't a file on the
+server. It's a page that React Router draws inside the browser. When the page is
+reloaded, the browser asks the server for `/animals/1` directly, so the server
+answers any non-`/api` address it doesn't recognise with `index.html`. React
+then loads and shows the right page.
+
+Addresses starting with `/api` are excluded from that fallback. If `/api/nope`
+returned `index.html`, the frontend's data code would receive a web page when it
+expected JSON and fail confusingly. Returning a JSON 404 tells it clearly that
+the endpoint doesn't exist.
+
+**14. Why is the font bundled into the build instead of loaded from Google
+Fonts?**
+
+- **Privacy:** loading from Google sends every visitor's IP address to Google. A
+  German court ruled in 2022 that this breached GDPR without consent, and the
+  rescue has visitors from Europe as well as Jordan.
+- **Self-containment:** the brief requires a single process that runs everything
+  itself, so the site shouldn't depend on an outside service just to display its
+  text.
+- **Reliability and speed:** the font arrives from the same server as the page,
+  with no extra connection, and it still works if Google is slow or blocked.
+
+**15. Where will real animal photos come from, and what does a card show until
+then?**
+Staff will upload photos through a staff-only photo-upload endpoint, planned for
+2 October. Until then, each card shows a hand-drawn portrait of the animal's
+species from `art.jsx`, so the page never shows a broken image or an empty box.
+
 ## Prompt for 2026-09-29 (verbatim)
 
 ```text
@@ -944,4 +1346,274 @@ Then the PR and `gh pr merge --merge` commands.
 
 Also remind me at the end: ADR-1 is dated 2026-09-25 but was committed Sep 28.
 I need to be ready to explain that the decision was made on the 25th.
+```
+
+## Prompt for 2026-10-01 (verbatim)
+
+```text
+Read CLAUDE.md, assignment_1.md, ADR.md, AI_USAGE.md, db/schema.sql and the whole
+domains/donations/ package before doing anything. Today is 2026-10-01.
+
+Git rules as always: do NOT run git commit, push or gh yourself. Write the files,
+show me what changed, and give me the exact commands with full commit messages
+(subject + body explaining WHY). Merge with --merge, never --squash.
+
+SECRETS RULE, which overrides everything else today: never ask me to paste a key,
+never print, echo, log or write any value of STRIPE_SECRET_KEY or
+STRIPE_WEBHOOK_SECRET. To check whether they're set, print only "set" / "not
+set" and the prefix (sk_test_ / sk_live_ / whsec_), never more characters. If a
+key ever appears in output, a file or a diff, stop and tell me so I can roll it.
+
+════════════════════════════════════════
+PART 0: start of session
+════════════════════════════════════════
+- Give me the commands: git checkout main, git pull, git checkout -b
+  feat/stripe-donations. Check that yesterday's donations branch is merged and
+  main is clean.
+- Log this prompt word for word in AI_USAGE.md, in the usual format, as an
+  uncommitted change. It goes into the separate docs/ai-usage commit in Part D,
+  not into any feature commit.
+
+════════════════════════════════════════
+PART A: prep, NO commits
+════════════════════════════════════════
+I'm doing steps 1–5 myself: a Stripe test-mode account (registered in Spain), the
+sk_test_ key set only in my PowerShell session, stripe login, `stripe listen
+--forward-to localhost:8000/api/donations/stripe/webhook` with the whsec_ set
+in $env:STRIPE_WEBHOOK_SECRET, then the CLI checkout sessions create test with
+unit_amount=25500 and then 25505.
+- Remind me of the exact test command. Don't run anything that needs the keys.
+- When I paste the output, tell me in plain words:
+  (1) does Stripe accept JOD on this account;
+  (2) is unit_amount in fils (1 JOD = 1000);
+  (3) must the last digit be 0 (25505 rejected?);
+  (4) what minimum amount Stripe states.
+  This settles decisions 3 and 9 below. If JOD is NOT accepted, STOP. We decide
+  together, because a second currency would break the fils-only SUM in the
+  ledger.
+
+════════════════════════════════════════
+DECISIONS: already made, restated so you can check them against the repo
+════════════════════════════════════════
+Tell me before coding if any of these conflicts with CLAUDE.md, assignment_1.md or
+an existing ADR.
+1.  ADR-5 = the regional-gateway decision: Stripe as a test-mode reference
+    adapter, with PayTabs/HyperPay as the production path, deliberately not
+    built. Written after the code works, dated 2026-10-01. Per-staff accounts
+    stay argued in the README and move to the report as a second deliberate
+    omission.
+2.  Pattern claims: ONLY Adapter (StripeGateway, AnimalDirectoryAdapter), DIP and
+    DI. Don't claim Strategy. See the pattern honesty table below.
+3.  Currency: JOD, if the prep test passes.
+4.  Purpose, earmark and optional donor name travel in Checkout session metadata
+    and come back inside the signed event. No pending-sessions table.
+5.  The ledger records the event's amount_total, NEVER the amount originally
+    requested.
+6.  "Payments unavailable" = a service check (gateway is None) that answers 503.
+    No Null Object class.
+7.  Success and cancel URLs are built from PUBLIC_BASE_URL, NEVER from the
+    request's Host header (an attacker-controlled Host could redirect donors to
+    a phishing page).
+8.  Test the real StripeGateway too: verify_event with a locally HMAC-signed
+    payload (no network), and create_checkout with stripe.checkout.Session.create
+    monkeypatched. That makes ADR-4's "Stripe only through the fake" untrue, so
+    fix that one sentence in ADR-4 and say in the commit body that it's a
+    correction, not a backfill.
+9.  MIN_CHECKOUT_FILS: a named constant set from Stripe's stated minimum. If
+    Stripe requires JOD amounts divisible by 10, enforce that in the model
+    (NewDonation / checkout validation) with a clear 400, not by letting Stripe
+    fail.
+10. Accepted risk: the public checkout endpoint can be spammed (rate limiting
+    would need Redis, which is forbidden). No money moves without a card, and no
+    ledger row without a verified payment. This goes in the report.
+11. Donate page (Oct 2): card via Checkout, CliQ alias, and bank transfer (the
+    last two recorded by staff). Use CLEARLY MARKED placeholders for the CliQ
+    alias and bank details unless I give you the real ones.
+12. Frontend today stops at the animal pages.
+
+Two gaps I want you to raise with me, not decide silently:
+- A: the earmarked animal can vanish between checkout and payment. The donor has
+  already paid, so a 4xx/5xx would make Stripe retry forever and lose the
+  record. My proposal: record the donation anyway and keep the earmark, or drop
+  it to general and log a warning. Recommend one.
+- B: the event's currency isn't jod, or amount_total is outside
+  MIN..MAX_DONATION_FILS. Should we log a warning, return 200 and not record it,
+  or record it anyway? Recommend one, keeping in mind money has already moved.
+
+════════════════════════════════════════
+PART B: feat/stripe-donations, 6 commits (7 if ADR-5 is separate)
+════════════════════════════════════════
+1. docs: move ADR-5 to the regional-gateway decision. CLAUDE.md ONLY: change
+   the ADR-5 line and the Oct 3 schedule row from per-staff accounts to "Stripe
+   as a test-mode reference adapter; PayTabs/HyperPay as the production path",
+   and add that production-path sentence to the Payments section.
+2. feat: read Stripe keys and PUBLIC_BASE_URL from the environment.
+   config.py gets stripe_secret_key, stripe_webhook_secret and public_base_url.
+   Secrets have NO defaults. Validate public_base_url (http(s) scheme, no
+   trailing slash, no path tricks). Add stripe to requirements.txt, pinned to the
+   exact version pip installed (show me `pip show stripe`), and update the
+   README env table. Config's __repr__ must never print the secret values: use
+   dataclass field(repr=False) or equivalent, and add a test for it.
+3. feat: add PaymentGateway interface with Stripe and fake adapters.
+   domains/donations/payments.py is the ONLY file that imports stripe (add a
+   test that enforces this, like the boundary test).
+   CheckoutSession(id, url) and PaymentConfirmed(session_id, amount_fils,
+   purpose, earmarked_animal_id, donor_name) are our own frozen dataclasses. No
+   Stripe object ever leaves this file. StripeGateway translates Stripe errors
+   into our own domain exceptions.
+4. feat: record paid Checkout sessions idempotently.
+   A new table stripe_payments(session_id TEXT NOT NULL UNIQUE, donation_id
+   INTEGER NOT NULL REFERENCES donations(id), recorded_at) via CREATE TABLE IF
+   NOT EXISTS. One repository method inserts the donation row and the payment
+   row in ONE transaction. A replayed session hits the UNIQUE constraint → roll
+   back → report "already recorded", not an error. There's still no update or
+   delete anywhere in the ledger. Note in the commit body that this is a schema
+   change in ADR-3's territory.
+5. feat: start checkout and confirm payments in the donation service, plus tests.
+   - start_checkout(payload) reuses the existing amount, purpose and earmark
+     rules (no duplicated validation), then calls the gateway. It writes NOTHING
+     to the ledger.
+   - confirm_payment(event) records the donation using the amount from the
+     verified event.
+   - FakeGateway tests: replay recorded once, unpaid session ignored, bad amount,
+     missing earmark (per gap A), payments unavailable (gateway None → error the
+     route turns into 503). Plus the real StripeGateway tests from decision 8.
+6. feat: expose checkout and the signature-verified webhook.
+   Routes, wiring in create_app, the 503 paths, route tests. ADR-5 last, in this
+   commit or as a 7th, once the live run works.
+
+WEBHOOK behaviour, fixed by CLAUDE.md, so check the code against every line:
+- It reads raw request bytes (request.get_data()) BEFORE any JSON parsing,
+  because the signature covers the exact bytes. Never request.json first.
+- It verifies with stripe.Webhook.construct_event, using the default timestamp
+  tolerance (replay protection).
+- A missing or bad Stripe-Signature → 400, nothing written, nothing sensitive
+  logged.
+- It acts ONLY on checkout.session.completed with payment_status == "paid". Any
+  other event → 200 and ignored, so Stripe stops retrying.
+- Replay → 200 "already recorded", no second row.
+- It is exempt from @require_admin (authenticated by signature instead), and so
+  is POST /api/donations/checkout (donors are the public). These are the ONLY
+  two exceptions. Comment both in the code, pointing at CLAUDE.md.
+- /donate/thanks NEVER writes to the ledger and never trusts query parameters.
+
+════════════════════════════════════════
+SOLID: one line each saying where it shows up, so I can defend it
+════════════════════════════════════════
+- SRP: payments.py talks to Stripe, the repository does SQL, the service decides,
+  routes do HTTP. The webhook route must not contain event-handling logic.
+- OCP: adding PayTabs means a new PaymentGateway implementation plus one line in
+  create_app, with ZERO edits to DonationService. Tell me whether that's
+  literally true of the code.
+- LSP: FakeGateway and StripeGateway return the same dataclasses and raise the
+  same domain exceptions. The service can't tell them apart.
+- ISP: PaymentGateway has only what the service calls (create_checkout,
+  verify_event). There are no Stripe-specific methods on it.
+- DIP: the service owns the PaymentGateway Protocol. The stripe SDK is a detail
+  that is injected, never imported by the service.
+
+════════════════════════════════════════
+PATTERN HONESTY TABLE: include this in your final summary
+════════════════════════════════════════
+I'm assessed on creational, structural and behavioral patterns, but I must only
+claim what's really there. For each category, tell me what the code actually
+has and whether I may claim it:
+- Structural: Adapter. StripeGateway adapts the Stripe SDK to PaymentGateway,
+  and AnimalDirectoryAdapter adapts AnimalService to AnimalDirectory. CLAIM.
+- Creational: create_app is Flask's "application factory", and NewDonation /
+  NewAnimal.from_payload are named constructors. Tell me honestly whether either
+  counts as GoF Factory Method (I believe not). Config read once at startup is
+  NOT a Singleton class, so don't label it one.
+- Behavioral: webhook handling that picks behaviour by event type is a
+  conditional or dict dispatch, not Strategy or Command. Say so plainly.
+If a GoF pattern would genuinely improve something here, argue it before
+writing it. Don't add one to fill a category.
+
+════════════════════════════════════════
+CODE SMELLS to avoid
+════════════════════════════════════════
+Stripe types leaking past payments.py. Duplicated amount/purpose/earmark
+validation between direct donations and checkout. Magic strings
+("checkout.session.completed", "paid", "jod", metadata keys): named constants.
+Floats anywhere near money (amount_total is already an integer, so keep it one).
+The service reading os.environ directly (config goes through Config only). Bare
+`except Exception` around Stripe calls: catch stripe.error.* specifically inside
+payments.py. Speculative PayTabs code: leave the seam, don't build it. A
+webhook handler that grows into a god function.
+
+════════════════════════════════════════
+SECURITY checklist: confirm each one in your summary
+════════════════════════════════════════
+- sk_live_ key → app still boots, payment endpoints return 503, and the log line
+  says "live key refused" WITHOUT any part of the key.
+- No keys set → 503 on both payment endpoints, and the rest of the site works.
+- Secrets never in logs, error bodies, Config repr, test output or git. Check
+  .gitignore covers any local env files.
+- Webhook payloads and donor names are never logged in full.
+- Metadata is set server-side only, from validated input. Respect Stripe's
+  metadata limits (key count and value length) and truncate or reject donor
+  names that exceed them.
+- Checkout session: mode="payment", card only, currency and amount fixed on the
+  server. The client never supplies a price ID or a currency.
+- Success and cancel URLs come from PUBLIC_BASE_URL only (decision 7).
+- Recorded amount = the event's amount_total (decision 5). Check the currency
+  (gap B).
+- Idempotency is enforced by the database (UNIQUE) plus the transaction, not by
+  a check-then-insert race.
+- Parameterised SQL only.
+- The checkout endpoint accepts application/json only, with a request size
+  limit (MAX_CONTENT_LENGTH).
+
+════════════════════════════════════════
+VERIFY: show the actual output
+════════════════════════════════════════
+- pytest --cov=domains --cov-report=term-missing (both domains + payments.py,
+  per file and total).
+- A live run with `stripe listen` running:
+    POST /api/donations/checkout → Checkout URL (I pay with 4242 4242 4242 4242);
+    the webhook arrives → exactly one ledger row → /impact changes;
+    stripe events resend <event_id> → still one row;
+    a forged signature (curl with a fake header) → 400;
+    no keys → 503; sk_live_ dummy key → 503, and show the log line.
+- The boundary test (both directions) and the "only payments.py imports stripe"
+  test are green. Show the file count and dependency count.
+
+════════════════════════════════════════
+PART C: start feat/react-frontend (branch off main AFTER the Stripe branch
+merges; the branch itself merges Oct 2). 3–4 commits today
+════════════════════════════════════════
+1. chore: add Vite + React build tooling at the repo root. package.json +
+   lockfile + vite.config.js, output to static/dist, dev proxy /api →
+   http://localhost:8000. Deps: react, react-dom, react-router-dom, vite,
+   @vitejs/plugin-react (5), which makes 9 declared with stripe (under 12).
+   NO manifest in any subfolder.
+2. feat: serve the built frontend from Flask with a client-side routing
+   fallback. /api/* is never swallowed: an unknown API path gives a JSON 404, not
+   index.html. Unknown non-API paths → index.html. Serve files with
+   send_from_directory only (no path traversal). A missing static/dist → a clear
+   message, not a crash.
+3. feat: add api client and router: frontend/src/main.jsx, App.jsx, api.js.
+   api.js centralises fetch and error handling (one place, no fetch calls
+   scattered through components).
+4. feat: add animal list and detail pages: the public view only (vaccinations,
+   no medical notes).
+Frontend security: no dangerouslySetInnerHTML anywhere, and no secrets in the
+frontend. Any VITE_ variable is PUBLIC and shipped to browsers, so Stripe keys
+never go near Vite. Checkout is a redirect, so no publishable key is needed.
+Don't split every button into its own file (the file count must stay ≤ 50).
+Give me the push command for tonight even though it merges Oct 2 (GitHub
+records push timestamps, not local dates).
+
+════════════════════════════════════════
+PART D: end of session
+════════════════════════════════════════
+- Ask me for my own-words explanation of today's work and add it to
+  AI_USAGE.md. Don't write it for me.
+- Then give me the commands for a separate branch/commit
+  docs/ai-usage-2026-10-01 containing only AI_USAGE.md.
+- Show me the commit count per day after today (target: ~10 commits + merges on
+  Oct 1, ~46 total, no day above ~28%).
+
+PRIORITY if we run short on time: the Stripe branch and its tests first, then
+ADR-5, then the frontend commits.
 ```

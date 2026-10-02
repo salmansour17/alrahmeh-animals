@@ -10,24 +10,48 @@ from __future__ import annotations
 
 from dataclasses import replace
 from datetime import date
+import os
 import re
+from io import BytesIO
 from itertools import product
 
 import pytest
+from PIL import ExifTags, Image
 
+from db.connection import SCHEMA_PATH
 from domains.animals.models import (
     MedicalRecordType,
     NewAnimal,
+    NewPlacementRequest,
     PlacementStatus,
+    RequestKind,
+    RequestOutcome,
+    StatusMove,
     ValidationError,
 )
-from domains.animals.repository import SqliteAnimalRepository
+from domains.animals.photos import (
+    MAX_DECODED_PIXELS,
+    MAX_PHOTO_SIDE,
+    FileSystemPhotoStore,
+    prepare_photo,
+)
+from domains.animals.repository import SqliteAnimalRepository, SqlitePlacementRepository
 from domains.animals.service import (
     ALLOWED_TRANSITIONS,
+    AdoptionAlreadyApproved,
     AnimalNotFound,
     AnimalService,
     IllegalTransition,
+    InvalidPhoto,
+    PhotoNotFound,
+    PhotoService,
+    PlacementService,
+    RequestAlreadyDecided,
+    RequestConflict,
+    RequestNotAccepted,
+    RequestNotFound,
     TransitionConflict,
+    UnsupportedPhotoType,
 )
 
 S = PlacementStatus
@@ -326,3 +350,441 @@ def test_placement_counts_include_every_status_even_when_zero(service):
         S.PENDING: 0,
         S.ADOPTED: 2,
     }
+
+
+# --- adoption and foster requests --------------------------------------------
+
+K = RequestKind
+APPLICANT = {"name": "Rana Haddad", "email": "rana@example.org", "message": "We have a garden."}
+
+
+@pytest.fixture
+def placement_repository(database) -> SqlitePlacementRepository:
+    return SqlitePlacementRepository(database)
+
+
+@pytest.fixture
+def placements(placement_repository, service) -> PlacementService:
+    return PlacementService(placement_repository, service)
+
+
+def _ask(placements, animal_id, kind=K.ADOPTION, **extra):
+    return placements.submit(animal_id, {"kind": kind.value, **APPLICANT, **extra})
+
+
+def _request_in(placement_repository, animal_id, kind) -> int:
+    """A request created directly, bypassing the who-may-ask rules, so a
+    decision can be tested against every animal status."""
+    return placement_repository.add_request(
+        animal_id, NewPlacementRequest.from_payload({"kind": kind.value, **APPLICANT})
+    ).id
+
+
+def _outcome(placement_repository, request_id) -> RequestOutcome:
+    return placement_repository.get_request(request_id).outcome
+
+
+def test_request_enums_match_the_schema_check_constraints():
+    schema = SCHEMA_PATH.read_text(encoding="utf-8")
+    for column, enum in (("kind", RequestKind), ("outcome", RequestOutcome)):
+        allowed = re.search(rf"CHECK \({column} IN \(([^)]*)\)\)", schema).group(1)
+        assert {v.strip().strip("'") for v in allowed.split(",")} == {e.value for e in enum}
+
+
+ACCEPTED = {
+    (K.ADOPTION, S.AVAILABLE),
+    (K.FOSTER, S.AVAILABLE),
+    (K.ADOPTION, S.FOSTERING),
+    (K.ADOPTION, S.PENDING),
+}
+
+
+@pytest.mark.parametrize(("kind", "status"), list(product(K, S)), ids=lambda v: v.value)
+def test_who_may_ask_for_what(service, placements, kind, status):
+    animal_id = _animal_in(service, status)
+    if (kind, status) in ACCEPTED:
+        request = _ask(placements, animal_id, kind)
+        assert request.outcome is RequestOutcome.OPEN
+        assert service.get(animal_id).status is status  # asking never moves an animal
+    else:
+        with pytest.raises(RequestNotAccepted):
+            _ask(placements, animal_id, kind)
+
+
+# What approving a request does, for every kind and starting status.
+APPROVE = {
+    (K.ADOPTION, S.AVAILABLE): S.PENDING,
+    (K.ADOPTION, S.FOSTERING): S.PENDING,
+    (K.ADOPTION, S.PENDING): AdoptionAlreadyApproved,
+    (K.ADOPTION, S.ADOPTED): IllegalTransition,
+    (K.FOSTER, S.AVAILABLE): S.FOSTERING,
+    (K.FOSTER, S.FOSTERING): IllegalTransition,
+    (K.FOSTER, S.PENDING): IllegalTransition,
+    (K.FOSTER, S.ADOPTED): IllegalTransition,
+}
+
+
+@pytest.mark.parametrize(("kind", "status"), list(product(K, S)), ids=lambda v: v.value)
+def test_approving_every_kind_from_every_status(service, placements, placement_repository, kind, status):
+    animal_id = _animal_in(service, status)
+    request_id = _request_in(placement_repository, animal_id, kind)
+    expected = APPROVE[(kind, status)]
+
+    if isinstance(expected, PlacementStatus):
+        decided = placements.decide(request_id, {"outcome": "approved"})
+        assert decided.outcome is RequestOutcome.APPROVED
+        assert service.get(animal_id).status is expected
+        assert service.status_history(animal_id)[-1].reason == f"{kind.value} request {request_id} approved"
+    else:
+        with pytest.raises(expected):
+            placements.decide(request_id, {"outcome": "approved"})
+        assert service.get(animal_id).status is status
+        assert _outcome(placement_repository, request_id) is RequestOutcome.OPEN
+
+
+def test_a_decided_request_cannot_be_approved_again(service, placements):
+    request = _ask(placements, _animal_in(service, S.AVAILABLE))
+    placements.decide(request.id, {"outcome": "declined"})
+    with pytest.raises(RequestAlreadyDecided):
+        placements.decide(request.id, {"outcome": "approved"})
+
+
+def test_declining_an_open_request_changes_only_the_request(service, placements):
+    animal_id = _animal_in(service, S.AVAILABLE)
+    chosen, backup = _ask(placements, animal_id), _ask(placements, animal_id)
+    placements.decide(chosen.id, {"outcome": "approved"})
+
+    placements.decide(backup.id, {"outcome": "declined"})
+
+    # Declining a backup must not undo the adoption that is going ahead.
+    assert service.get(animal_id).status is S.PENDING
+
+
+def test_when_the_approved_adoption_falls_through_the_next_can_be_approved(
+    service, placements, placement_repository
+):
+    animal_id = _animal_in(service, S.AVAILABLE)
+    first, backup = _ask(placements, animal_id), _ask(placements, animal_id)
+    placements.decide(first.id, {"outcome": "approved"})
+
+    placements.decide(first.id, {"outcome": "declined", "reason": "Family moved abroad"})
+
+    assert service.get(animal_id).status is S.AVAILABLE
+    assert service.status_history(animal_id)[-1].reason == "Family moved abroad"
+    assert _outcome(placement_repository, backup.id) is RequestOutcome.OPEN
+    placements.decide(backup.id, {"outcome": "approved"})
+    assert service.get(animal_id).status is S.PENDING
+
+
+def test_an_approved_foster_cannot_be_declined(service, placements):
+    request = _ask(placements, _animal_in(service, S.AVAILABLE), K.FOSTER)
+    placements.decide(request.id, {"outcome": "approved"})
+    with pytest.raises(RequestAlreadyDecided):
+        placements.decide(request.id, {"outcome": "declined"})
+
+
+def test_a_declined_request_cannot_be_declined_again(service, placements):
+    request = _ask(placements, _animal_in(service, S.AVAILABLE))
+    placements.decide(request.id, {"outcome": "declined"})
+    with pytest.raises(RequestAlreadyDecided):
+        placements.decide(request.id, {"outcome": "declined"})
+
+
+def test_approving_a_foster_declines_other_foster_requests_but_not_adoptions(
+    service, placements, placement_repository
+):
+    animal_id = _animal_in(service, S.AVAILABLE)
+    chosen = _ask(placements, animal_id, K.FOSTER)
+    other_foster = _ask(placements, animal_id, K.FOSTER)
+    adoption = _ask(placements, animal_id, K.ADOPTION)
+
+    placements.decide(chosen.id, {"outcome": "approved"})
+
+    assert service.get(animal_id).status is S.FOSTERING
+    assert _outcome(placement_repository, other_foster.id) is RequestOutcome.DECLINED
+    assert _outcome(placement_repository, adoption.id) is RequestOutcome.OPEN
+
+
+def test_adoption_declines_every_remaining_open_request(service, placements, placement_repository):
+    animal_id = _animal_in(service, S.AVAILABLE)
+    chosen = _ask(placements, animal_id)
+    foster = _ask(placements, animal_id, K.FOSTER)
+    placements.decide(chosen.id, {"outcome": "approved"})
+    backup = _ask(placements, animal_id)
+
+    service.transition(animal_id, {"to": "adopted"})
+
+    assert _outcome(placement_repository, chosen.id) is RequestOutcome.APPROVED
+    assert _outcome(placement_repository, foster.id) is RequestOutcome.DECLINED
+    assert _outcome(placement_repository, backup.id) is RequestOutcome.DECLINED
+    assert placements.list_requests("open") == []
+
+
+def test_two_staff_deciding_at_once_only_one_wins(service, placements, placement_repository):
+    """The second decision was based on a stale read: the request was open
+    when it looked, but the first decision landed in between."""
+    request = _ask(placements, _animal_in(service, S.AVAILABLE))
+    stale_view = placement_repository.get_request(request.id)
+
+    class StaleRequests:
+        def __init__(self, real):
+            self._real = real
+
+        def __getattr__(self, name):
+            return getattr(self._real, name)
+
+        def get_request(self, request_id):
+            return stale_view
+
+    placements.decide(request.id, {"outcome": "declined"})  # the first member of staff
+    late = PlacementService(StaleRequests(placement_repository), service)
+    with pytest.raises(RequestConflict):
+        late.decide(request.id, {"outcome": "approved"})
+    assert _outcome(placement_repository, request.id) is RequestOutcome.DECLINED
+
+
+def test_a_failed_status_change_rolls_back_the_decision(service, placement_repository):
+    """If the animal moved meanwhile, neither the decision nor the move lands."""
+    animal_id = _animal_in(service, S.FOSTERING)
+    request_id = _request_in(placement_repository, animal_id, K.ADOPTION)
+
+    landed = placement_repository.decide(
+        request_id,
+        RequestOutcome.OPEN,
+        RequestOutcome.APPROVED,
+        StatusMove(animal_id, S.AVAILABLE, S.PENDING, "stale"),  # it is not available
+        frozenset(),
+    )
+
+    assert landed is False
+    assert _outcome(placement_repository, request_id) is RequestOutcome.OPEN
+    assert service.get(animal_id).status is S.FOSTERING
+
+
+def test_a_filled_honeypot_is_accepted_silently_and_stores_nothing(service, placements):
+    animal_id = _animal_in(service, S.AVAILABLE)
+    assert _ask(placements, animal_id, website="http://cheap-pills.example") is None
+    # Even an invalid bot submission gets the same silent answer.
+    assert placements.submit(animal_id, {"website": "x", "kind": "nonsense"}) is None
+    assert placements.list_requests() == []
+
+
+@pytest.mark.parametrize(
+    ("payload", "complaint"),
+    [
+        (None, "JSON object"),
+        ({"kind": "adoption", "name": "Rana"}, "missing field(s): email"),
+        ({**APPLICANT, "kind": "sponsor"}, "kind must be one of"),
+        ({**APPLICANT, "kind": "adoption", "phone": "079"}, "unknown field(s): phone"),
+        ({**APPLICANT, "kind": "adoption", "name": "x" * 121}, "at most 120"),
+        ({**APPLICANT, "kind": "adoption", "message": "x" * 2001}, "at most 2000"),
+        ({**APPLICANT, "kind": "adoption", "email": "rana.example.org"}, "must look like"),
+        ({**APPLICANT, "kind": "adoption", "email": "rana@localhost"}, "must look like"),
+        ({**APPLICANT, "kind": "adoption", "email": "ra na@example.org"}, "must look like"),
+        ({**APPLICANT, "kind": "adoption", "email": "x" * 250 + "@a.io"}, "at most 254"),
+    ],
+)
+def test_invalid_requests_are_rejected_without_echoing_personal_data(
+    service, placements, payload, complaint
+):
+    animal_id = _animal_in(service, S.AVAILABLE)
+    with pytest.raises(ValidationError, match=re.escape(complaint)) as raised:
+        placements.submit(animal_id, payload)
+    assert "rana" not in str(raised.value).lower()
+    assert placements.list_requests() == []
+
+
+@pytest.mark.parametrize(
+    ("payload", "complaint"),
+    [
+        ({"outcome": "open"}, "approved or declined"),
+        ({"outcome": "maybe"}, "outcome must be one of"),
+        ({"outcome": "approved", "by": "Salma"}, "unknown field(s): by"),
+    ],
+)
+def test_invalid_decisions_are_rejected(service, placements, payload, complaint):
+    request = _ask(placements, _animal_in(service, S.AVAILABLE))
+    with pytest.raises(ValidationError, match=re.escape(complaint)):
+        placements.decide(request.id, payload)
+
+
+def test_requests_are_listed_and_filtered(service, placements):
+    animal_id = _animal_in(service, S.AVAILABLE)
+    first, second = _ask(placements, animal_id), _ask(placements, animal_id, K.FOSTER)
+    placements.decide(first.id, {"outcome": "declined"})
+
+    assert [r.id for r in placements.list_requests()] == [first.id, second.id]
+    assert [r.id for r in placements.list_requests("open")] == [second.id]
+    with pytest.raises(ValidationError):
+        placements.list_requests("lost")
+
+
+def test_unknown_request_or_animal(service, placements):
+    with pytest.raises(RequestNotFound):
+        placements.decide(999, {"outcome": "approved"})
+    with pytest.raises(AnimalNotFound):
+        _ask(placements, 999)
+
+
+# --- photos ------------------------------------------------------------------
+
+AMMAN_GPS = {
+    ExifTags.GPS.GPSLatitudeRef: "N",
+    ExifTags.GPS.GPSLatitude: (31.0, 57.0, 0.0),
+    ExifTags.GPS.GPSLongitudeRef: "E",
+    ExifTags.GPS.GPSLongitude: (35.0, 55.0, 0.0),
+}
+
+
+def image_bytes(fmt="JPEG", size=(64, 48), mode="RGB", gps=False, orientation=None) -> bytes:
+    image = Image.new(mode, size, "orange" if mode == "RGB" else 0)
+    exif = Image.Exif()
+    if gps:
+        exif[ExifTags.Base.GPSInfo] = AMMAN_GPS
+    if orientation:
+        exif[ExifTags.Base.Orientation] = orientation
+    out = BytesIO()
+    image.save(out, fmt, **({"exif": exif} if fmt == "JPEG" else {}))
+    return out.getvalue()
+
+
+def opened(data: bytes) -> Image.Image:
+    return Image.open(BytesIO(data))
+
+
+def test_gps_is_gone_after_an_upload_is_prepared():
+    original = image_bytes(gps=True)
+    assert opened(original).getexif().get_ifd(ExifTags.IFD.GPSInfo)  # it really was there
+
+    stored = opened(prepare_photo(original, "image/jpeg"))
+
+    assert stored.format == "WEBP"
+    assert dict(stored.getexif()) == {}
+    assert "exif" not in stored.info and "xmp" not in stored.info
+
+
+def test_the_camera_rotation_is_applied_before_metadata_is_dropped():
+    sideways = image_bytes(size=(200, 100), orientation=6)  # "rotate 90 degrees"
+    assert opened(prepare_photo(sideways, "image/jpeg")).size == (100, 200)
+
+
+def test_large_photos_are_capped_on_their_longest_side():
+    assert opened(prepare_photo(image_bytes(size=(3200, 1000)), "image/jpeg")).size == (MAX_PHOTO_SIDE, 500)
+
+
+def test_transparency_survives_and_other_types_are_accepted():
+    png = image_bytes("PNG", mode="RGBA")
+    assert opened(prepare_photo(png, "image/png")).mode == "RGBA"
+    webp = image_bytes("WEBP")
+    assert opened(prepare_photo(webp, "image/webp")).format == "WEBP"
+
+
+@pytest.mark.parametrize("content_type", ["text/plain", "image/gif", "image/svg+xml", ""])
+def test_unsupported_types_are_refused_before_decoding(content_type):
+    with pytest.raises(UnsupportedPhotoType):
+        prepare_photo(image_bytes(), content_type)
+
+
+@pytest.mark.parametrize(
+    ("data", "content_type", "complaint"),
+    [
+        (b"not an image at all", "image/jpeg", "not a readable image"),
+        (image_bytes()[:200], "image/jpeg", "not a readable image"),  # truncated
+        (image_bytes("PNG"), "image/jpeg", "not a image/jpeg image"),  # claims to be what it isn't
+    ],
+    ids=["garbage", "truncated", "wrong-format"],
+)
+def test_files_that_are_not_what_they_claim_are_refused(data, content_type, complaint):
+    with pytest.raises(InvalidPhoto, match=complaint):
+        prepare_photo(data, content_type)
+
+
+@pytest.mark.parametrize("side", [6000, 8000], ids=["over-limit", "over-twice-limit"])
+def test_decompression_bombs_are_refused(side):
+    """A one-bit PNG of side x side pixels is a few kilobytes on disk but would
+    decode to tens of millions of pixels."""
+    bomb = BytesIO()
+    Image.new("1", (side, side)).save(bomb, "PNG")
+    assert side * side > MAX_DECODED_PIXELS and len(bomb.getvalue()) < 100_000
+    with pytest.raises(InvalidPhoto, match="too large"):
+        prepare_photo(bomb.getvalue(), "image/png")
+
+
+class MemoryPhotoStore:
+    """An in-memory PhotoStore. The same contract as FileSystemPhotoStore."""
+
+    def __init__(self) -> None:
+        self._photos: dict[int, tuple[bytes, int]] = {}
+
+    def save(self, animal_id: int, photo: bytes) -> None:
+        previous = self._photos.get(animal_id, (b"", 0))[1]
+        self._photos[animal_id] = (photo, previous + 1)
+
+    def load(self, animal_id: int) -> bytes | None:
+        return self._photos.get(animal_id, (None, None))[0]
+
+    def version(self, animal_id: int) -> int | None:
+        return self._photos.get(animal_id, (None, None))[1]
+
+
+@pytest.fixture(params=["filesystem", "memory"])
+def any_store(request, tmp_path):
+    return FileSystemPhotoStore(tmp_path / "photos") if request.param == "filesystem" else MemoryPhotoStore()
+
+
+def test_both_stores_keep_the_same_contract(any_store):
+    """Liskov: whichever store the service is given, it behaves the same."""
+    assert any_store.load(1) is None and any_store.version(1) is None
+
+    any_store.save(1, b"first")
+    first = any_store.version(1)
+    any_store.save(1, b"second")
+
+    assert any_store.load(1) == b"second"
+    assert isinstance(any_store.version(1), int) and any_store.version(1) > first
+    assert any_store.load(2) is None
+
+
+def test_a_new_photo_always_gets_a_newer_version_even_within_one_clock_tick(tmp_path):
+    store = FileSystemPhotoStore(tmp_path)
+    store.save(3, b"first")
+    future = store.version(3) + 10_000_000_000  # pretend the first save came later
+    os.utime(tmp_path / "3.webp", ns=(future, future))
+
+    store.save(3, b"second")
+
+    assert store.version(3) > future
+
+
+def test_the_filesystem_store_writes_whole_files_named_only_by_id(tmp_path):
+    folder = tmp_path / "photos"
+    store = FileSystemPhotoStore(folder)  # creates the folder itself
+    for _ in range(5):
+        store.save(7, b"photo")
+    assert sorted(p.name for p in folder.iterdir()) == ["7.webp"]  # no temp files left behind
+    for bad_id in (0, -1, True, "7", "../7"):
+        with pytest.raises(ValueError):
+            store.save(bad_id, b"x")
+
+
+@pytest.fixture
+def photos(service) -> PhotoService:
+    return PhotoService(service, MemoryPhotoStore(), prepare=lambda data, content_type: b"webp:" + data)
+
+
+def test_upload_stores_the_prepared_image_and_versions_its_url(service, photos):
+    animal_id = _animal_in(service, S.AVAILABLE)
+    assert photos.photo_url(animal_id) is None
+
+    first = photos.upload(animal_id, b"raw", "image/jpeg")
+    second = photos.upload(animal_id, b"raw2", "image/jpeg")
+
+    assert photos.photo(animal_id) == b"webp:raw2"
+    assert first.startswith(f"/api/animals/{animal_id}/photo?v=") and second != first
+
+
+def test_photos_need_an_existing_animal_and_a_photo(service, photos):
+    with pytest.raises(AnimalNotFound):
+        photos.upload(999, b"raw", "image/jpeg")
+    with pytest.raises(PhotoNotFound):
+        photos.photo(_animal_in(service, S.AVAILABLE))
