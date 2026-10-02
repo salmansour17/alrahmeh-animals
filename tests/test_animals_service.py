@@ -788,3 +788,37 @@ def test_photos_need_an_existing_animal_and_a_photo(service, photos):
         photos.upload(999, b"raw", "image/jpeg")
     with pytest.raises(PhotoNotFound):
         photos.photo(_animal_in(service, S.AVAILABLE))
+
+
+# --- offline adoptions ---------------------------------------------------------
+
+
+def test_homes_found_adds_offline_adoptions_to_adopted_animals(service):
+    assert service.homes_found() == 0
+    service.record_offline_adoption({"animal_count": 300, "adopted_on": "2025-12-31", "note": "2018 to 2025"})
+    service.record_offline_adoption({"animal_count": 2, "adopted_on": "2026-09-20"})
+    _animal_in(service, S.ADOPTED)
+    _animal_in(service, S.PENDING)  # not adopted yet: does not count
+
+    assert service.homes_found() == 303
+    assert [a.animal_count for a in service.offline_adoptions()] == [2, 300]  # newest first
+
+
+@pytest.mark.parametrize(
+    ("payload", "complaint"),
+    [
+        ({"adopted_on": "2026-09-01"}, "missing field(s): animal_count"),
+        ({"animal_count": 0, "adopted_on": "2026-09-01"}, "from 1 to 10000"),
+        ({"animal_count": 10_001, "adopted_on": "2026-09-01"}, "from 1 to 10000"),
+        ({"animal_count": True, "adopted_on": "2026-09-01"}, "from 1 to 10000"),
+        ({"animal_count": "3", "adopted_on": "2026-09-01"}, "from 1 to 10000"),
+        ({"animal_count": 3, "adopted_on": "2027-01-01"}, "future"),
+        ({"animal_count": 3, "adopted_on": "2026-09-01", "note": "x" * 501}, "at most 500"),
+        ({"animal_count": 3, "adopted_on": "2026-09-01", "by": "Salma"}, "unknown field(s): by"),
+    ],
+)
+def test_invalid_offline_adoptions_are_rejected(service, payload, complaint):
+    with pytest.raises(ValidationError, match=re.escape(complaint)):
+        service.record_offline_adoption(payload)
+    assert service.homes_found() == 0
+
