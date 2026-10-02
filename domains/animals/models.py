@@ -23,6 +23,13 @@ BREED_MAX = 80
 NOTES_MAX = 2000
 DESCRIPTION_MAX = 500
 REASON_MAX = 500
+APPLICANT_NAME_MAX = 120
+EMAIL_MAX = 254  # the longest address the email standards allow
+MESSAGE_MAX = 2000
+
+# The adoption form has a field people never see. Bots fill in every field
+# they find, so a value here marks the request as spam (see is_honeypot).
+HONEYPOT_FIELD = "website"
 
 
 class PlacementStatus(StrEnum):
@@ -39,6 +46,22 @@ class MedicalRecordType(StrEnum):
     VACCINATION = "vaccination"
     TREATMENT = "treatment"
     CHECKUP = "checkup"
+
+
+class RequestKind(StrEnum):
+    """What a member of the public is asking for. Values match the CHECK
+    constraint on placement_requests.kind."""
+
+    ADOPTION = "adoption"
+    FOSTER = "foster"
+
+
+class RequestOutcome(StrEnum):
+    """Where a request stands. Values match placement_requests.outcome."""
+
+    OPEN = "open"
+    APPROVED = "approved"
+    DECLINED = "declined"
 
 
 class ValidationError(ValueError):
@@ -137,6 +160,85 @@ class StatusChange:
     changed_at: str
 
 
+@dataclass(frozen=True)
+class PlacementRequest:
+    """A request to adopt or foster one animal. The applicant fields are
+    personal data: staff-only, never logged, never in public JSON."""
+
+    id: int
+    animal_id: int
+    kind: RequestKind
+    applicant_name: str
+    applicant_email: str
+    message: str | None
+    outcome: RequestOutcome
+    submitted_at: str
+
+
+@dataclass(frozen=True)
+class NewPlacementRequest:
+    kind: RequestKind
+    applicant_name: str
+    applicant_email: str
+    message: str | None
+
+    @classmethod
+    def from_payload(cls, payload: Any) -> NewPlacementRequest:
+        fields = _fields(
+            payload,
+            required={"kind", "name", "email"},
+            optional={"message", HONEYPOT_FIELD},
+        )
+        return cls(
+            kind=_enum(fields, "kind", RequestKind),
+            applicant_name=_text(fields, "name", APPLICANT_NAME_MAX),
+            applicant_email=_email(fields, "email"),
+            message=_optional_text(fields, "message", MESSAGE_MAX),
+        )
+
+
+@dataclass(frozen=True)
+class Decision:
+    """A staff decision on a request: approve it or decline it."""
+
+    outcome: RequestOutcome
+    reason: str | None
+
+    @classmethod
+    def from_payload(cls, payload: Any) -> Decision:
+        fields = _fields(payload, required={"outcome"}, optional={"reason"})
+        outcome = _enum(fields, "outcome", RequestOutcome)
+        if outcome is RequestOutcome.OPEN:
+            raise ValidationError("outcome must be approved or declined")
+        return cls(outcome=outcome, reason=_optional_text(fields, "reason", REASON_MAX))
+
+
+@dataclass(frozen=True)
+class StatusMove:
+    """An animal status change that must happen together with something else
+    (a request decision), in the same transaction."""
+
+    animal_id: int
+    expected: PlacementStatus
+    new: PlacementStatus
+    reason: str | None
+
+
+def is_honeypot(payload: Any) -> bool:
+    """True if the hidden form field was filled in, which only bots do.
+
+    Checked before any validation, so a bot gets the same answer whether or
+    not the rest of what it sent was valid, and learns nothing."""
+    return isinstance(payload, Mapping) and bool(payload.get(HONEYPOT_FIELD))
+
+
+def parse_outcome(raw: str | None) -> RequestOutcome | None:
+    """Parse an optional ?status= filter for the staff request list."""
+    if raw is None:
+        return None
+    return _enum({"status": raw}, "status", RequestOutcome)
+
+
 def parse_status(raw: str | None) -> PlacementStatus | None:
     """Parse an optional ?status= filter. None means no filter."""
     if raw is None:
@@ -175,6 +277,26 @@ def _optional_text(fields: Mapping[str, Any], name: str, max_length: int) -> str
     if fields.get(name) in (None, ""):
         return None
     return _text(fields, name, max_length)
+
+
+def _email(fields: Mapping[str, Any], name: str) -> str:
+    """A basic shape check, not a full standards parser: one @, something on
+    both sides, a dot in the domain, no spaces. Whether the address really
+    exists is only ever known when staff reply to it. The message never repeats
+    the value, because it is personal data."""
+    value = _text(fields, name, EMAIL_MAX)
+    local, at, domain = value.rpartition("@")
+    if (
+        not at
+        or not local
+        or "@" in local
+        or any(ch.isspace() for ch in value)
+        or "." not in domain
+        or domain.startswith(".")
+        or domain.endswith(".")
+    ):
+        raise ValidationError(f"{name} must look like name@example.org")
+    return value
 
 
 def _past_date(fields: Mapping[str, Any], name: str, today: date) -> date:

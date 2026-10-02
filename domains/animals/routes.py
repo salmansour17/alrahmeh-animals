@@ -13,18 +13,48 @@ from __future__ import annotations
 
 from flask import Blueprint, jsonify, request
 
-from domains.animals.models import Animal, MedicalRecord, StatusChange, ValidationError
+from domains.animals.models import (
+    Animal,
+    MedicalRecord,
+    PlacementRequest,
+    StatusChange,
+    ValidationError,
+)
 from domains.animals.service import (
+    AdoptionAlreadyApproved,
     AnimalNotFound,
     AnimalService,
     IllegalTransition,
+    PlacementService,
+    RequestAlreadyDecided,
+    RequestConflict,
+    RequestNotAccepted,
+    RequestNotFound,
     TransitionConflict,
 )
 from security import require_admin
 
+# Every domain error, mapped once to a status code and a stable error name.
+# Messages never contain applicant data, so they are safe to return.
+ERROR_RESPONSES: dict[type[Exception], tuple[int, str]] = {
+    ValidationError: (400, "validation_failed"),
+    AnimalNotFound: (404, "not_found"),
+    RequestNotFound: (404, "not_found"),
+    IllegalTransition: (409, "illegal_transition"),
+    TransitionConflict: (409, "transition_conflict"),
+    RequestNotAccepted: (409, "request_not_accepted"),
+    RequestAlreadyDecided: (409, "already_decided"),
+    AdoptionAlreadyApproved: (409, "adoption_already_approved"),
+    RequestConflict: (409, "request_conflict"),
+}
 
-def create_animals_blueprint(service: AnimalService) -> Blueprint:
-    """Build the blueprint around an already-constructed service, so the
+# The public answer to a request form, identical whether the request was
+# stored or a honeypot was caught: no id, so a bot cannot tell the difference.
+RECEIVED = {"status": "received"}
+
+
+def create_animals_blueprint(service: AnimalService, placements: PlacementService) -> Blueprint:
+    """Build the blueprint around already-constructed services, so the
     choice of repository is made in create_app and nowhere in here."""
     bp = Blueprint("animals", __name__, url_prefix="/api/animals")
 
@@ -51,6 +81,16 @@ def create_animals_blueprint(service: AnimalService) -> Blueprint:
                 for v in vaccinations
             ],
         )
+
+    # Exception 3 of 3 to "every write gets @require_admin" (CLAUDE.md, Auth):
+    # applicants are the public. It only creates an open request; the animal's
+    # status changes only when staff decide.
+    @bp.post("/<int:animal_id>/requests")
+    def submit_request(animal_id: int):
+        if not request.is_json:
+            return jsonify(error="unsupported_media_type", detail="send application/json"), 415
+        placements.submit(animal_id, request.get_json(silent=True))
+        return jsonify(RECEIVED), 201
 
     # --- staff ---------------------------------------------------------------
 
@@ -83,25 +123,54 @@ def create_animals_blueprint(service: AnimalService) -> Blueprint:
         record = service.record_medical(animal_id, request.get_json(silent=True))
         return jsonify(_medical(record)), 201
 
-    # --- errors --------------------------------------------------------------
-
-    @bp.errorhandler(ValidationError)
-    def bad_request(error: ValidationError):
-        return jsonify(error="validation_failed", detail=str(error)), 400
-
-    @bp.errorhandler(AnimalNotFound)
-    def not_found(error: AnimalNotFound):
-        return jsonify(error="not_found", detail=str(error)), 404
-
-    @bp.errorhandler(IllegalTransition)
-    def illegal_transition(error: IllegalTransition):
-        return jsonify(error="illegal_transition", detail=str(error)), 409
-
-    @bp.errorhandler(TransitionConflict)
-    def conflict(error: TransitionConflict):
-        return jsonify(error="transition_conflict", detail=str(error)), 409
-
+    _register_error_handlers(bp)
     return bp
+
+
+def create_requests_blueprint(placements: PlacementService) -> Blueprint:
+    """Staff-only: read adoption and foster requests and decide them."""
+    bp = Blueprint("requests", __name__, url_prefix="/api/requests")
+
+    @bp.get("")
+    @require_admin
+    def list_requests():
+        requests = placements.list_requests(request.args.get("status"))
+        return jsonify(requests=[_request(r) for r in requests])
+
+    @bp.post("/<int:request_id>/decision")
+    @require_admin
+    def decide(request_id: int):
+        return jsonify(_request(placements.decide(request_id, request.get_json(silent=True))))
+
+    _register_error_handlers(bp)
+    return bp
+
+
+def _register_error_handlers(bp: Blueprint) -> None:
+    for error_type, (status, name) in ERROR_RESPONSES.items():
+        bp.register_error_handler(error_type, _error_response(status, name))
+
+
+def _error_response(status: int, name: str):
+    def handle(error: Exception):
+        return jsonify(error=name, detail=str(error)), status
+
+    return handle
+
+
+def _request(placement: PlacementRequest) -> dict:
+    """Staff view of a request, applicant details included. Only ever
+    returned by @require_admin routes."""
+    return {
+        "id": placement.id,
+        "animal_id": placement.animal_id,
+        "kind": placement.kind.value,
+        "applicant_name": placement.applicant_name,
+        "applicant_email": placement.applicant_email,
+        "message": placement.message,
+        "outcome": placement.outcome.value,
+        "submitted_at": placement.submitted_at,
+    }
 
 
 def _public(animal: Animal) -> dict:
