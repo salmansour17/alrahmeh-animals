@@ -44,7 +44,7 @@ hashing — one shared secret is all this organisation needs, and it keeps ADR-1
 closed with 503; never add a default password. Per-staff accounts are a
 deliberate omission argued in the README and the report (not an ADR).
 
-Every write endpoint in either domain gets `@require_admin`, with exactly three
+Every write endpoint in any domain gets `@require_admin`, with exactly four
 exceptions. Two are in the Stripe payment flow: `POST /api/donations/checkout` is
 public because donors are not staff; it validates the amount against
 server-side bounds and writes nothing to the ledger. `POST
@@ -53,8 +53,22 @@ server-side bounds and writes nothing to the ledger. `POST
 body, and answers 400 to anything that fails. The third (added 2026-10-02) is
 `POST /api/animals/<id>/requests`, the adoption and foster form that replaces
 the Google Forms: applicants are the public. It only creates an open request and
-never changes an animal's status; only a staff decision does that. No other
-write endpoint may be unauthenticated.
+never changes an animal's status; only a staff decision does that. The fourth
+(also 2026-10-02) is `POST /api/enquiries`, the contact and volunteer form that
+replaces the old site's contact form and volunteer Google Form; it only stores a
+message for staff. Both public forms take JSON only, carry a honeypot, and keep
+the sender's details staff-only and out of logs. No other write endpoint may be
+unauthenticated.
+
+**Staff portal** (decision reversed on 2026-10-02, it was "no staff pages"). The
+organisation's own work happens off the website too: adoptions arranged in
+person, donations in cash, by CliQ or by bank. A website that cannot record
+those cannot show true totals, so staff get a portal at `/staff` in the React
+app. It signs in with `ADMIN_PASSWORD`, held only in page memory (never in
+localStorage or a cookie) and sent as the Authorization header by `api.js`; with
+no cookie involved there is no cross-site request forgery to defend against.
+It covers: adoption and foster requests, contact and volunteer messages,
+recording offline donations and offline adoptions, and managing animals.
 
 ## Payments (Stripe)
 
@@ -110,21 +124,23 @@ Dependency Inversion on a real external integration. It reverses the earlier
   `.github/workflows/`, or any Terraform/Bicep/ARM file. These are explicitly
   forbidden and would cost me marks.
 - No Redis, RabbitMQ, Celery, cron, or any external database, cache or queue.
-- Keep declared dependencies under 12 across both manifests. Currently 10
-  (flask, stripe, pytest, pytest-cov; react, react-dom, react-router-dom,
-  @fontsource/nunito, vite, @vitejs/plugin-react); Pillow for photo uploads
-  makes it 11.
+- Keep declared dependencies under 12 across both manifests. Currently 11
+  (flask, stripe, pillow, pytest, pytest-cov; react, react-dom,
+  react-router-dom, @fontsource/nunito, vite, @vitejs/plugin-react).
 - Keep the file count between 15 and 50, excluding lockfiles, `.venv` and
   `node_modules`. The assignment calls this rough guidance; the final count may
   land a couple over 50 once `static/dist` is committed, which I accepted on
-  2026-10-01, and on 2026-10-02 I accepted a projected final count of 53.
-  Don't split every button into its own component file.
+  2026-10-01, and on 2026-10-02 I accepted a projected final count of 53, then
+  about 63 once the enquiries domain, the staff portal and the pages carrying
+  over the old site's content were added. The report must say why. Don't split
+  every button into its own component file.
 
-## The two feature domains
+## The feature domains
 
-Both persist through SQLite. Both must be independently modularizable: neither
-package imports the other, and they reference each other by primary-key value
-only. That boundary is the seam a later assignment would cut to split them into
+Two required domains, plus a small third (`domains/enquiries/`, contact and
+volunteer messages) added on 2026-10-02. All persist through SQLite. All must be
+independently modularizable: no domain package imports another, and they
+reference each other by primary-key value only. That boundary is the seam a later assignment would cut to split them into
 separate services, and I have to be able to point at it.
 
 **1. Animal intake and adoption** (`domains/animals/`)
@@ -151,6 +167,16 @@ counters read from. Rows arrive two ways: staff record cash and bank-transfer
 donations through a `@require_admin` endpoint, and card donations are written
 by the verified Stripe webhook (see Payments).
 
+**Offline adoptions** (animals domain). Adoptions arranged entirely in person,
+for animals never entered here or from before the site existed, are recorded by
+staff as dated, append-only entries with a count. The homepage's "found homes"
+figure is the adopted animals on record plus those entries: every part of it is
+a record someone entered, never a number typed into configuration.
+
+**3. Enquiries** (`domains/enquiries/`)
+Contact and volunteer messages from the public, kept for staff, who mark each
+one handled. Same four layers as the other domains.
+
 ## Repository layout
 
 ```
@@ -162,6 +188,7 @@ db/               schema.sql, connection.py
 domains/
   animals/        models.py repository.py service.py routes.py
   donations/      models.py repository.py service.py routes.py
+  enquiries/      models.py repository.py service.py routes.py
                   payments.py  (StripeGateway adapter; the PaymentGateway Protocol
                   lives in service.py, the fake gateway in the tests)
 frontend/src/     main.jsx App.jsx api.js pages/ components/ styles.css
