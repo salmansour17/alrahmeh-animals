@@ -10,10 +10,13 @@ from __future__ import annotations
 
 from dataclasses import replace
 from datetime import date
+import os
 import re
+from io import BytesIO
 from itertools import product
 
 import pytest
+from PIL import ExifTags, Image
 
 from db.connection import SCHEMA_PATH
 from domains.animals.models import (
@@ -26,6 +29,12 @@ from domains.animals.models import (
     StatusMove,
     ValidationError,
 )
+from domains.animals.photos import (
+    MAX_DECODED_PIXELS,
+    MAX_PHOTO_SIDE,
+    FileSystemPhotoStore,
+    prepare_photo,
+)
 from domains.animals.repository import SqliteAnimalRepository, SqlitePlacementRepository
 from domains.animals.service import (
     ALLOWED_TRANSITIONS,
@@ -33,12 +42,16 @@ from domains.animals.service import (
     AnimalNotFound,
     AnimalService,
     IllegalTransition,
+    InvalidPhoto,
+    PhotoNotFound,
+    PhotoService,
     PlacementService,
     RequestAlreadyDecided,
     RequestConflict,
     RequestNotAccepted,
     RequestNotFound,
     TransitionConflict,
+    UnsupportedPhotoType,
 )
 
 S = PlacementStatus
@@ -611,3 +624,167 @@ def test_unknown_request_or_animal(service, placements):
         placements.decide(999, {"outcome": "approved"})
     with pytest.raises(AnimalNotFound):
         _ask(placements, 999)
+
+
+# --- photos ------------------------------------------------------------------
+
+AMMAN_GPS = {
+    ExifTags.GPS.GPSLatitudeRef: "N",
+    ExifTags.GPS.GPSLatitude: (31.0, 57.0, 0.0),
+    ExifTags.GPS.GPSLongitudeRef: "E",
+    ExifTags.GPS.GPSLongitude: (35.0, 55.0, 0.0),
+}
+
+
+def image_bytes(fmt="JPEG", size=(64, 48), mode="RGB", gps=False, orientation=None) -> bytes:
+    image = Image.new(mode, size, "orange" if mode == "RGB" else 0)
+    exif = Image.Exif()
+    if gps:
+        exif[ExifTags.Base.GPSInfo] = AMMAN_GPS
+    if orientation:
+        exif[ExifTags.Base.Orientation] = orientation
+    out = BytesIO()
+    image.save(out, fmt, **({"exif": exif} if fmt == "JPEG" else {}))
+    return out.getvalue()
+
+
+def opened(data: bytes) -> Image.Image:
+    return Image.open(BytesIO(data))
+
+
+def test_gps_is_gone_after_an_upload_is_prepared():
+    original = image_bytes(gps=True)
+    assert opened(original).getexif().get_ifd(ExifTags.IFD.GPSInfo)  # it really was there
+
+    stored = opened(prepare_photo(original, "image/jpeg"))
+
+    assert stored.format == "WEBP"
+    assert dict(stored.getexif()) == {}
+    assert "exif" not in stored.info and "xmp" not in stored.info
+
+
+def test_the_camera_rotation_is_applied_before_metadata_is_dropped():
+    sideways = image_bytes(size=(200, 100), orientation=6)  # "rotate 90 degrees"
+    assert opened(prepare_photo(sideways, "image/jpeg")).size == (100, 200)
+
+
+def test_large_photos_are_capped_on_their_longest_side():
+    assert opened(prepare_photo(image_bytes(size=(3200, 1000)), "image/jpeg")).size == (MAX_PHOTO_SIDE, 500)
+
+
+def test_transparency_survives_and_other_types_are_accepted():
+    png = image_bytes("PNG", mode="RGBA")
+    assert opened(prepare_photo(png, "image/png")).mode == "RGBA"
+    webp = image_bytes("WEBP")
+    assert opened(prepare_photo(webp, "image/webp")).format == "WEBP"
+
+
+@pytest.mark.parametrize("content_type", ["text/plain", "image/gif", "image/svg+xml", ""])
+def test_unsupported_types_are_refused_before_decoding(content_type):
+    with pytest.raises(UnsupportedPhotoType):
+        prepare_photo(image_bytes(), content_type)
+
+
+@pytest.mark.parametrize(
+    ("data", "content_type", "complaint"),
+    [
+        (b"not an image at all", "image/jpeg", "not a readable image"),
+        (image_bytes()[:200], "image/jpeg", "not a readable image"),  # truncated
+        (image_bytes("PNG"), "image/jpeg", "not a image/jpeg image"),  # claims to be what it isn't
+    ],
+    ids=["garbage", "truncated", "wrong-format"],
+)
+def test_files_that_are_not_what_they_claim_are_refused(data, content_type, complaint):
+    with pytest.raises(InvalidPhoto, match=complaint):
+        prepare_photo(data, content_type)
+
+
+@pytest.mark.parametrize("side", [6000, 8000], ids=["over-limit", "over-twice-limit"])
+def test_decompression_bombs_are_refused(side):
+    """A one-bit PNG of side x side pixels is a few kilobytes on disk but would
+    decode to tens of millions of pixels."""
+    bomb = BytesIO()
+    Image.new("1", (side, side)).save(bomb, "PNG")
+    assert side * side > MAX_DECODED_PIXELS and len(bomb.getvalue()) < 100_000
+    with pytest.raises(InvalidPhoto, match="too large"):
+        prepare_photo(bomb.getvalue(), "image/png")
+
+
+class MemoryPhotoStore:
+    """An in-memory PhotoStore. The same contract as FileSystemPhotoStore."""
+
+    def __init__(self) -> None:
+        self._photos: dict[int, tuple[bytes, int]] = {}
+
+    def save(self, animal_id: int, photo: bytes) -> None:
+        previous = self._photos.get(animal_id, (b"", 0))[1]
+        self._photos[animal_id] = (photo, previous + 1)
+
+    def load(self, animal_id: int) -> bytes | None:
+        return self._photos.get(animal_id, (None, None))[0]
+
+    def version(self, animal_id: int) -> int | None:
+        return self._photos.get(animal_id, (None, None))[1]
+
+
+@pytest.fixture(params=["filesystem", "memory"])
+def any_store(request, tmp_path):
+    return FileSystemPhotoStore(tmp_path / "photos") if request.param == "filesystem" else MemoryPhotoStore()
+
+
+def test_both_stores_keep_the_same_contract(any_store):
+    """Liskov: whichever store the service is given, it behaves the same."""
+    assert any_store.load(1) is None and any_store.version(1) is None
+
+    any_store.save(1, b"first")
+    first = any_store.version(1)
+    any_store.save(1, b"second")
+
+    assert any_store.load(1) == b"second"
+    assert isinstance(any_store.version(1), int) and any_store.version(1) > first
+    assert any_store.load(2) is None
+
+
+def test_a_new_photo_always_gets_a_newer_version_even_within_one_clock_tick(tmp_path):
+    store = FileSystemPhotoStore(tmp_path)
+    store.save(3, b"first")
+    future = store.version(3) + 10_000_000_000  # pretend the first save came later
+    os.utime(tmp_path / "3.webp", ns=(future, future))
+
+    store.save(3, b"second")
+
+    assert store.version(3) > future
+
+
+def test_the_filesystem_store_writes_whole_files_named_only_by_id(tmp_path):
+    folder = tmp_path / "photos"
+    store = FileSystemPhotoStore(folder)  # creates the folder itself
+    for _ in range(5):
+        store.save(7, b"photo")
+    assert sorted(p.name for p in folder.iterdir()) == ["7.webp"]  # no temp files left behind
+    for bad_id in (0, -1, True, "7", "../7"):
+        with pytest.raises(ValueError):
+            store.save(bad_id, b"x")
+
+
+@pytest.fixture
+def photos(service) -> PhotoService:
+    return PhotoService(service, MemoryPhotoStore(), prepare=lambda data, content_type: b"webp:" + data)
+
+
+def test_upload_stores_the_prepared_image_and_versions_its_url(service, photos):
+    animal_id = _animal_in(service, S.AVAILABLE)
+    assert photos.photo_url(animal_id) is None
+
+    first = photos.upload(animal_id, b"raw", "image/jpeg")
+    second = photos.upload(animal_id, b"raw2", "image/jpeg")
+
+    assert photos.photo(animal_id) == b"webp:raw2"
+    assert first.startswith(f"/api/animals/{animal_id}/photo?v=") and second != first
+
+
+def test_photos_need_an_existing_animal_and_a_photo(service, photos):
+    with pytest.raises(AnimalNotFound):
+        photos.upload(999, b"raw", "image/jpeg")
+    with pytest.raises(PhotoNotFound):
+        photos.photo(_animal_in(service, S.AVAILABLE))

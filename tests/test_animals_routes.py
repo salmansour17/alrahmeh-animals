@@ -15,6 +15,7 @@ import pytest
 
 from app import create_app
 from tests.conftest import ADMIN_PASSWORD
+from tests.test_animals_service import image_bytes, opened
 
 STAFF = {
     "Authorization": "Basic "
@@ -211,3 +212,73 @@ def test_request_errors_map_to_status_codes(client, setup, kind, status, error):
 def test_unknown_request_is_404(client):
     response = client.post("/api/requests/999/decision", json={"outcome": "approved"}, headers=STAFF)
     assert (response.status_code, response.get_json()["error"]) == (404, "not_found")
+
+
+# --- photos over HTTP --------------------------------------------------------
+
+
+def _upload(client, animal_id, data, content_type="image/jpeg", headers=STAFF):
+    return client.put(
+        f"/api/animals/{animal_id}/photo", data=data, headers={**headers, "Content-Type": content_type}
+    )
+
+
+def test_staff_upload_and_the_public_sees_the_photo(client):
+    animal_id = _admit(client)
+    uploaded = _upload(client, animal_id, image_bytes(gps=True))
+    assert uploaded.status_code == 200
+    url = uploaded.get_json()["photo_url"]
+
+    assert client.get(f"/api/animals/{animal_id}").get_json()["photo_url"] == url
+    assert client.get("/api/animals").get_json()["animals"][0]["photo_url"] == url
+
+    photo = client.get(url)
+    assert photo.status_code == 200
+    assert photo.content_type == "image/webp"
+    assert photo.headers["X-Content-Type-Options"] == "nosniff"
+    assert "immutable" in photo.headers["Cache-Control"]
+    assert client.get(f"/api/animals/{animal_id}/photo").headers["Cache-Control"] == "no-cache"
+    # The GPS proof, end to end: what visitors download has no metadata at all.
+    assert dict(opened(photo.data).getexif()) == {}
+
+
+def test_a_replaced_photo_gets_a_new_address(client):
+    animal_id = _admit(client)
+    first = _upload(client, animal_id, image_bytes()).get_json()["photo_url"]
+    second = _upload(client, animal_id, image_bytes(size=(80, 60))).get_json()["photo_url"]
+    assert first != second
+
+
+def test_the_public_cannot_upload(client):
+    animal_id = _admit(client)
+    assert _upload(client, animal_id, image_bytes(), headers={}).status_code == 401
+
+
+def test_the_size_limit_is_raised_for_the_photo_route_only(client):
+    animal_id = _admit(client)
+    three_mb = b"\xff\xd8\xff" + b"0" * (3 * 1024 * 1024)
+    assert _upload(client, animal_id, three_mb).status_code == 413
+    # One megabyte fits under the photo limit (it fails later, as not an image)...
+    assert _upload(client, animal_id, b"0" * (1024 * 1024)).status_code == 400
+    # ...but every other route still refuses anything over 64 KiB.
+    big = client.post("/api/animals", data=b"0" * (100 * 1024), headers={**STAFF, "Content-Type": "application/json"})
+    assert big.status_code == 413
+
+
+@pytest.mark.parametrize(
+    ("data", "content_type", "status", "error"),
+    [
+        (b"hello", "text/plain", 415, "unsupported_media_type"),
+        (b"not really a jpeg", "image/jpeg", 400, "validation_failed"),
+    ],
+)
+def test_bad_uploads_are_refused(client, data, content_type, status, error):
+    response = _upload(client, _admit(client), data, content_type)
+    assert (response.status_code, response.get_json()["error"]) == (status, error)
+
+
+def test_missing_animal_or_photo_is_404(client):
+    assert _upload(client, 999, image_bytes()).status_code == 404
+    animal_id = _admit(client)
+    assert client.get(f"/api/animals/{animal_id}/photo").status_code == 404
+    assert client.get(f"/api/animals/{animal_id}").get_json()["photo_url"] is None
