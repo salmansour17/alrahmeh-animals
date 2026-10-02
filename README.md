@@ -61,7 +61,7 @@ default. No `.env` file is required.
 | Variable | Default | Purpose |
 |---|---|---|
 | `PORT` | `8000` | TCP port to listen on. Values that are not valid port numbers are ignored with a warning. |
-| `DATA_DIR` | `./data` | Directory holding the SQLite file. Created on startup if absent. |
+| `DATA_DIR` | `./data` | Directory holding the SQLite file and the `photos/` folder of animal photos. Both are created on startup if absent. |
 | `FLASK_DEBUG` | `0` | Set to `1` for the Flask reloader and tracebacks. Leave unset in deployment. |
 | `ADMIN_PASSWORD` | _(unset)_ | Shared password for the staff-only endpoints. **Unset disables them**, returning 503 rather than allowing access. |
 | `STRIPE_SECRET_KEY` | _(unset)_ | Stripe **test-mode** secret key (`sk_test_…`). Unset, or a live `sk_live_…` key, disables card donations (503); the rest of the site keeps working. |

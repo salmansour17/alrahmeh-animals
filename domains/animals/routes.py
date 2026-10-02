@@ -11,7 +11,7 @@ record except vaccinations; the staff one, behind @require_admin, has it all.
 
 from __future__ import annotations
 
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, Response, jsonify, request
 
 from domains.animals.models import (
     Animal,
@@ -20,17 +20,21 @@ from domains.animals.models import (
     StatusChange,
     ValidationError,
 )
+from domains.animals.photos import MAX_PHOTO_BYTES
 from domains.animals.service import (
     AdoptionAlreadyApproved,
     AnimalNotFound,
     AnimalService,
     IllegalTransition,
+    PhotoNotFound,
+    PhotoService,
     PlacementService,
     RequestAlreadyDecided,
     RequestConflict,
     RequestNotAccepted,
     RequestNotFound,
     TransitionConflict,
+    UnsupportedPhotoType,
 )
 from security import require_admin
 
@@ -40,6 +44,8 @@ ERROR_RESPONSES: dict[type[Exception], tuple[int, str]] = {
     ValidationError: (400, "validation_failed"),
     AnimalNotFound: (404, "not_found"),
     RequestNotFound: (404, "not_found"),
+    PhotoNotFound: (404, "not_found"),
+    UnsupportedPhotoType: (415, "unsupported_media_type"),
     IllegalTransition: (409, "illegal_transition"),
     TransitionConflict: (409, "transition_conflict"),
     RequestNotAccepted: (409, "request_not_accepted"),
@@ -48,22 +54,52 @@ ERROR_RESPONSES: dict[type[Exception], tuple[int, str]] = {
     RequestConflict: (409, "request_conflict"),
 }
 
+# A versioned photo address never changes content, so browsers may keep it for
+# a year; any other address is revalidated every time.
+CACHE_VERSIONED = "public, max-age=31536000, immutable"
+CACHE_UNVERSIONED = "no-cache"
+
 # The public answer to a request form, identical whether the request was
 # stored or a honeypot was caught: no id, so a bot cannot tell the difference.
 RECEIVED = {"status": "received"}
 
 
-def create_animals_blueprint(service: AnimalService, placements: PlacementService) -> Blueprint:
+def create_animals_blueprint(
+    service: AnimalService, placements: PlacementService, photos: PhotoService
+) -> Blueprint:
     """Build the blueprint around already-constructed services, so the
     choice of repository is made in create_app and nowhere in here."""
     bp = Blueprint("animals", __name__, url_prefix="/api/animals")
+
+    def public(animal: Animal) -> dict:
+        return {**_public(animal), "photo_url": photos.photo_url(animal.id)}
+
+    @bp.get("/<int:animal_id>/photo")
+    def get_photo(animal_id: int):
+        response = Response(photos.photo(animal_id), mimetype="image/webp")
+        # Never let a browser guess a different type for these bytes.
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        current = str(photos.version(animal_id))
+        response.headers["Cache-Control"] = (
+            CACHE_VERSIONED if request.args.get("v") == current else CACHE_UNVERSIONED
+        )
+        return response
+
+    @bp.put("/<int:animal_id>/photo")
+    @require_admin
+    def upload_photo(animal_id: int):
+        # The 64 KiB limit set in create_app is raised for this route alone,
+        # before the body is read.
+        request.max_content_length = MAX_PHOTO_BYTES
+        url = photos.upload(animal_id, request.get_data(), request.mimetype)
+        return jsonify(photo_url=url)
 
     # --- public --------------------------------------------------------------
 
     @bp.get("")
     def list_animals():
         animals = service.list_animals(request.args.get("status"))
-        return jsonify(animals=[_public(animal) for animal in animals])
+        return jsonify(animals=[public(animal) for animal in animals])
 
     @bp.get("/stats")
     def placement_stats():
@@ -75,7 +111,7 @@ def create_animals_blueprint(service: AnimalService, placements: PlacementServic
         animal = service.get(animal_id)
         vaccinations = service.vaccinations(animal_id)
         return jsonify(
-            **_public(animal),
+            **public(animal),
             vaccinations=[
                 {"description": v.description, "occurred_on": v.occurred_on.isoformat()}
                 for v in vaccinations
@@ -99,7 +135,7 @@ def create_animals_blueprint(service: AnimalService, placements: PlacementServic
     def get_animal_for_staff(animal_id: int):
         animal = service.get(animal_id)
         return jsonify(
-            **_public(animal),
+            **public(animal),
             notes=animal.notes,
             medical_records=[_medical(r) for r in service.medical_history(animal_id)],
             status_history=[_change(c) for c in service.status_history(animal_id)],
@@ -109,13 +145,13 @@ def create_animals_blueprint(service: AnimalService, placements: PlacementServic
     @require_admin
     def admit_animal():
         animal = service.admit(request.get_json(silent=True))
-        return jsonify(**_public(animal), notes=animal.notes), 201
+        return jsonify(**public(animal), notes=animal.notes), 201
 
     @bp.post("/<int:animal_id>/transitions")
     @require_admin
     def transition_animal(animal_id: int):
         animal = service.transition(animal_id, request.get_json(silent=True))
-        return jsonify(_public(animal))
+        return jsonify(public(animal))
 
     @bp.post("/<int:animal_id>/medical-records")
     @require_admin
