@@ -29,6 +29,7 @@ from domains.animals.service import (
     PlacementService,
 )
 from domains.donations.repository import SqliteDonationRepository
+from domains.donations.models import OfflineMethods
 from domains.donations.payments import StripeGateway
 from domains.donations.routes import create_donations_blueprint
 from domains.donations.service import DonationService, PaymentGateway
@@ -127,7 +128,13 @@ def create_app(config: Config | None = None) -> Flask:
         today=amman_today,
         gateway=_payment_gateway(config),
     )
-    app.register_blueprint(create_donations_blueprint(donation_service))
+    offline = OfflineMethods(
+        cliq_alias=config.cliq_alias,
+        bank_name=config.bank_name,
+        bank_iban=config.bank_iban,
+        bank_account_name=config.bank_account_name,
+    )
+    app.register_blueprint(create_donations_blueprint(donation_service, offline))
 
     app.register_error_handler(HTTPException, _json_http_error)
     _register_meta_routes(app)

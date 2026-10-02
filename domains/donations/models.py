@@ -162,6 +162,23 @@ class PaymentConfirmed:
 
 
 @dataclass(frozen=True)
+class OfflineMethods:
+    """Ways to give without a card: a CliQ alias and a bank account. Donations
+    made this way are recorded afterwards by staff, like cash."""
+
+    cliq_alias: str | None
+    bank_name: str | None
+    bank_iban: str | None
+    bank_account_name: str | None
+
+    @property
+    def has_bank(self) -> bool:
+        # An IBAN and the account holder's name are the minimum anyone needs
+        # to make a transfer; the bank's name is a courtesy.
+        return bool(self.bank_iban and self.bank_account_name)
+
+
+@dataclass(frozen=True)
 class ImpactSummary:
     """The homepage figures, all derived from the ledger at request time."""
 

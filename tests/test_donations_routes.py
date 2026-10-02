@@ -14,6 +14,7 @@ import stripe
 
 import app as app_module
 from app import AnimalDirectoryAdapter, create_app
+from config import load_config
 from domains.animals.repository import SqliteAnimalRepository
 from domains.animals.service import AnimalService
 from tests.conftest import ADMIN_PASSWORD
@@ -235,3 +236,37 @@ def test_a_live_key_is_refused_by_name_and_never_logged(config, caplog):
     assert client.post("/api/donations/checkout", json={"amount_jod": "5", "purpose": "general"}).status_code == 503
     assert "live key refused" in caplog.text
     assert "VALUE" not in caplog.text and "sk_live_" not in caplog.text
+
+
+# --- other ways to give --------------------------------------------------------
+
+
+def test_offline_methods_are_hidden_until_configured(client):
+    assert client.get("/api/donations/offline-methods").get_json() == {"cliq": None, "bank": None}
+
+
+def test_offline_methods_come_from_configuration(config):
+    configured = replace(
+        config,
+        cliq_alias="RAHMEH-DEMO",
+        bank_name="Demo Bank",
+        bank_iban="JO00 DEMO 0000 0000 0000 0000 0000 00",
+        bank_account_name="Al-Rahmeh (demo)",
+    )
+    body = create_app(configured).test_client().get("/api/donations/offline-methods").get_json()
+    assert body["cliq"] == {"alias": "RAHMEH-DEMO"}
+    assert body["bank"]["iban"].startswith("JO00 DEMO")
+
+
+def test_a_bank_without_an_iban_and_holder_is_not_offered(config):
+    half = replace(config, bank_name="Demo Bank", bank_iban="JO00 DEMO")
+    assert create_app(half).test_client().get("/api/donations/offline-methods").get_json()["bank"] is None
+
+
+def test_offline_methods_are_read_from_the_environment(monkeypatch):
+    monkeypatch.setenv("CLIQ_ALIAS", "  RAHMEH-DEMO  ")
+    monkeypatch.setenv("BANK_IBAN", "")
+    config = load_config()
+    assert config.cliq_alias == "RAHMEH-DEMO"
+    assert config.bank_iban is None
+

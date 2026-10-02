@@ -50,6 +50,13 @@ class Config:
     # None when PUBLIC_BASE_URL was set but invalid: payments are then disabled
     # rather than sending donors somewhere unintended.
     public_base_url: str | None = DEFAULT_PUBLIC_BASE_URL
+    # Ways to give without a card, shown on the donate page. Public details,
+    # not secrets, but they belong to the rescue, so they come from the
+    # environment and never from source. Unset means that option is hidden.
+    cliq_alias: str | None = None
+    bank_name: str | None = None
+    bank_iban: str | None = None
+    bank_account_name: str | None = None
 
     @property
     def database_path(self) -> Path:
@@ -76,7 +83,16 @@ def load_config() -> Config:
         stripe_secret_key=os.environ.get("STRIPE_SECRET_KEY") or None,
         stripe_webhook_secret=os.environ.get("STRIPE_WEBHOOK_SECRET") or None,
         public_base_url=_read_public_base_url(),
+        cliq_alias=_read_optional("CLIQ_ALIAS"),
+        bank_name=_read_optional("BANK_NAME"),
+        bank_iban=_read_optional("BANK_IBAN"),
+        bank_account_name=_read_optional("BANK_ACCOUNT_NAME"),
     )
+
+
+def _read_optional(name: str) -> str | None:
+    value = os.environ.get(name, "").strip()
+    return value or None
 
 
 def _read_public_base_url() -> str | None:
