@@ -17,6 +17,7 @@ from typing import Any
 from db.connection import Database
 from domains.animals.models import (
     Animal,
+    AnimalProfile,
     MedicalRecord,
     MedicalRecordType,
     NewAnimal,
@@ -95,6 +96,44 @@ class SqliteAnimalRepository:
                 "SELECT status, COUNT(*) AS animals FROM animals GROUP BY status"
             ).fetchall()
         return {PlacementStatus(row["status"]): row["animals"] for row in rows}
+
+    def profile(self, animal_id: int) -> AnimalProfile | None:
+        with self._database.unit_of_work() as connection:
+            row = connection.execute(
+                "SELECT born_on, colour, personality, weight_grams, about "
+                "FROM animal_profiles WHERE animal_id = ?",
+                (animal_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return AnimalProfile(
+            born_on=date.fromisoformat(row["born_on"]) if row["born_on"] else None,
+            colour=row["colour"],
+            personality=row["personality"],
+            weight_grams=row["weight_grams"],
+            about=row["about"],
+        )
+
+    def save_profile(self, animal_id: int, profile: AnimalProfile) -> None:
+        """Create or replace the animal's profile in one statement."""
+        with self._database.unit_of_work() as connection:
+            connection.execute(
+                "INSERT INTO animal_profiles "
+                "(animal_id, born_on, colour, personality, weight_grams, about) "
+                "VALUES (?, ?, ?, ?, ?, ?) "
+                "ON CONFLICT (animal_id) DO UPDATE SET born_on = excluded.born_on, "
+                "colour = excluded.colour, personality = excluded.personality, "
+                "weight_grams = excluded.weight_grams, about = excluded.about, "
+                "updated_at = datetime('now')",
+                (
+                    animal_id,
+                    profile.born_on.isoformat() if profile.born_on else None,
+                    profile.colour,
+                    profile.personality,
+                    profile.weight_grams,
+                    profile.about,
+                ),
+            )
 
     def add_offline_adoption(self, adoption: NewOfflineAdoption) -> OfflineAdoption:
         with self._database.unit_of_work() as connection:

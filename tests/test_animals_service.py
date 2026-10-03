@@ -20,7 +20,10 @@ from PIL import ExifTags, Image
 
 from db.connection import SCHEMA_PATH
 from domains.animals.models import (
+    AnimalProfile,
     MedicalRecordType,
+    age_text,
+    weight_text,
     NewAnimal,
     NewPlacementRequest,
     PlacementStatus,
@@ -821,4 +824,91 @@ def test_invalid_offline_adoptions_are_rejected(service, payload, complaint):
     with pytest.raises(ValidationError, match=re.escape(complaint)):
         service.record_offline_adoption(payload)
     assert service.homes_found() == 0
+
+
+# --- public profile details ----------------------------------------------------
+
+PROFILE = {
+    "born_on": "2026-08-01",
+    "colour": "Rich golden",
+    "personality": "Friendly",
+    "weight_kg": "6.8",
+    "about": "Loves everyone he meets.",
+}
+
+
+@pytest.mark.parametrize(
+    ("born_on", "text"),
+    [
+        (None, None),
+        (date(2026, 9, 20), "under a month"),
+        (date(2026, 8, 29), "1 month"),
+        (date(2026, 7, 30), "1 month"),  # two calendar months back, one full month lived
+        (date(2026, 7, 29), "2 months"),
+        (date(2025, 9, 30), "11 months"),
+        (date(2025, 9, 29), "1 year"),
+        (date(2022, 1, 1), "4 years"),
+    ],
+)
+def test_age_is_counted_in_whole_months_and_years(born_on, text):
+    assert age_text(born_on, TODAY) == text
+
+
+@pytest.mark.parametrize(
+    ("grams", "text"),
+    [(None, None), (6_800, "6.8 kg"), (12_000, "12 kg"), (450, "0.45 kg"), (1, "0.001 kg"), (150_000, "150 kg")],
+)
+def test_weight_is_shown_in_kilograms_without_floats(grams, text):
+    assert weight_text(grams) == text
+
+
+def test_a_profile_is_saved_replaced_and_read_back(service):
+    animal_id = _animal_in(service, S.AVAILABLE)
+    assert service.profile(animal_id) == AnimalProfile()  # nothing written yet
+
+    saved = service.update_profile(animal_id, PROFILE)
+    assert saved.weight_grams == 6_800
+    assert service.profile(animal_id) == saved
+
+    # A new profile replaces the old one: fields left out are cleared.
+    service.update_profile(animal_id, {"colour": "Golden"})
+    assert service.profile(animal_id) == AnimalProfile(colour="Golden")
+
+
+def test_blank_profile_fields_are_cleared(service):
+    animal_id = _animal_in(service, S.AVAILABLE)
+    service.update_profile(animal_id, PROFILE)
+    service.update_profile(animal_id, {k: "" for k in PROFILE})
+    assert service.profile(animal_id) == AnimalProfile()
+
+
+@pytest.mark.parametrize(
+    ("change", "complaint"),
+    [
+        ({"weight_kg": 6.8}, "as a string"),
+        ({"weight_kg": "1e3"}, "as a string"),
+        ({"weight_kg": "6,8"}, "as a string"),
+        ({"weight_kg": "6.8901"}, "as a string"),
+        ({"weight_kg": "\u0666"}, "as a string"),  # Arabic-Indic 6
+        ({"weight_kg": "0"}, "more than 0"),
+        ({"weight_kg": "150.001"}, "at most 150"),
+        ({"born_on": "2027-01-01"}, "future"),
+        ({"colour": "x" * 41}, "at most 40"),
+        ({"personality": "x" * 61}, "at most 60"),
+        ({"about": "x" * 1001}, "at most 1000"),
+        ({"age": "2 months"}, "unknown field(s): age"),
+    ],
+)
+def test_invalid_profiles_are_rejected(service, change, complaint):
+    animal_id = _animal_in(service, S.AVAILABLE)
+    with pytest.raises(ValidationError, match=re.escape(complaint)):
+        service.update_profile(animal_id, {**PROFILE, **change})
+    assert service.profile(animal_id) == AnimalProfile()
+
+
+def test_profile_needs_an_existing_animal(service):
+    with pytest.raises(AnimalNotFound):
+        service.update_profile(999, PROFILE)
+    with pytest.raises(AnimalNotFound):
+        service.profile(999)
 

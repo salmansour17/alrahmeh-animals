@@ -82,6 +82,21 @@ CREATE TABLE IF NOT EXISTS status_changes (
 CREATE INDEX IF NOT EXISTS idx_status_changes_animal ON status_changes (animal_id);
 
 
+-- The public "about me" details of an animal: one optional row per animal.
+-- A separate table rather than new columns on animals, because
+-- CREATE TABLE IF NOT EXISTS reaches existing databases and ALTER TABLE would
+-- need a migration step. Age is stored as a date of birth so it is never out
+-- of date; weight as whole grams so no decimal ever reaches the database.
+CREATE TABLE IF NOT EXISTS animal_profiles (
+    animal_id    INTEGER PRIMARY KEY REFERENCES animals (id) ON DELETE CASCADE,
+    born_on      TEXT,
+    colour       TEXT,
+    personality  TEXT,
+    weight_grams INTEGER CHECK (weight_grams IS NULL OR weight_grams > 0),
+    about        TEXT,
+    updated_at   TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 -- Adoptions arranged entirely in person: for animals never entered here, or
 -- from before the site existed. Staff record them as dated entries with a
 -- count; the homepage's "found homes" figure adds them to the adopted animals
