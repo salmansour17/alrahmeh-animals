@@ -17,7 +17,13 @@ from __future__ import annotations
 
 from flask import Blueprint, jsonify, request
 
-from domains.donations.models import Donation, ImpactSummary, ValidationError, format_jod
+from domains.donations.models import (
+    Donation,
+    ImpactSummary,
+    OfflineMethods,
+    ValidationError,
+    format_jod,
+)
 from domains.donations.service import (
     DonationNotFound,
     DonationService,
@@ -28,10 +34,14 @@ from domains.donations.service import (
 from security import require_admin
 
 
-def create_donations_blueprint(service: DonationService) -> Blueprint:
+def create_donations_blueprint(service: DonationService, offline: OfflineMethods) -> Blueprint:
     bp = Blueprint("donations", __name__, url_prefix="/api/donations")
 
     # --- public --------------------------------------------------------------
+
+    @bp.get("/offline-methods")
+    def offline_methods():
+        return jsonify(_offline(offline))
 
     @bp.get("/impact")
     def impact():
@@ -113,6 +123,22 @@ def _donation(donation: Donation) -> dict:
         "purpose": donation.purpose.value,
         "earmarked_animal_id": donation.earmarked_animal_id,
         "received_on": donation.received_on.isoformat(),
+    }
+
+
+def _offline(methods: OfflineMethods) -> dict:
+    """Each option is null when not configured, so the page can hide it."""
+    return {
+        "cliq": {"alias": methods.cliq_alias} if methods.cliq_alias else None,
+        "bank": (
+            {
+                "bank_name": methods.bank_name,
+                "iban": methods.bank_iban,
+                "account_name": methods.bank_account_name,
+            }
+            if methods.has_bank
+            else None
+        ),
     }
 
 

@@ -10,10 +10,12 @@ separate web server, worker or build step at runtime.
 from __future__ import annotations
 
 import logging
+import mimetypes
 from datetime import date, datetime, timedelta, timezone
+from pathlib import Path
 
-from flask import Flask, jsonify
-from werkzeug.exceptions import HTTPException
+from flask import Flask, abort, jsonify, send_from_directory
+from werkzeug.exceptions import HTTPException, NotFound
 
 from config import Config, load_config
 from db.connection import Database
@@ -27,6 +29,7 @@ from domains.animals.service import (
     PlacementService,
 )
 from domains.donations.repository import SqliteDonationRepository
+from domains.donations.models import OfflineMethods
 from domains.donations.payments import StripeGateway
 from domains.donations.routes import create_donations_blueprint
 from domains.donations.service import DonationService, PaymentGateway
@@ -53,6 +56,14 @@ STRIPE_LIVE_KEY_PREFIX = "sk_live_"
 # you or offer to try again. Neither writes to the ledger.
 CHECKOUT_SUCCESS_PATH = "/donate/thanks"
 CHECKOUT_CANCEL_PATH = "/donate"
+
+# The compiled React app. Committed to the repository, so a clone plus
+# `pip install` plus `python app.py` serves the whole site without Node.
+FRONTEND_DIST = Path(__file__).resolve().parent / "static" / "dist"
+API_PREFIX = "api/"
+# Python's type table does not know .woff2 on every platform (Windows among
+# them), and the bundled font would otherwise go out as a generic download.
+mimetypes.add_type("font/woff2", ".woff2")
 
 
 def amman_today() -> date:
@@ -120,13 +131,21 @@ def create_app(config: Config | None = None) -> Flask:
         today=amman_today,
         gateway=_payment_gateway(config),
     )
-    app.register_blueprint(create_donations_blueprint(donation_service))
+    offline = OfflineMethods(
+        cliq_alias=config.cliq_alias,
+        bank_name=config.bank_name,
+        bank_iban=config.bank_iban,
+        bank_account_name=config.bank_account_name,
+    )
+    app.register_blueprint(create_donations_blueprint(donation_service, offline))
     app.register_blueprint(
         create_enquiries_blueprint(EnquiryService(SqliteEnquiryRepository(database)))
     )
 
     app.register_error_handler(HTTPException, _json_http_error)
     _register_meta_routes(app)
+    # Last, so every /api route above is matched before the catch-all below.
+    _register_frontend_routes(app, FRONTEND_DIST)
     return app
 
 
@@ -188,14 +207,38 @@ def _register_meta_routes(app: Flask) -> None:
         """
         return jsonify(tables=database.table_names())
 
-    @app.get("/")
-    def index():
-        return (
-            "Al-Rahmeh Association for Animals - API is running.\n"
-            "The React frontend has not been built into static/dist yet.\n",
-            200,
-            {"Content-Type": "text/plain; charset=utf-8"},
-        )
+
+def _register_frontend_routes(app: Flask, dist: Path) -> None:
+    """Serve the built React app, and hand every other non-API path to it.
+
+    React Router owns URLs like /animals/3 in the browser. When one is opened
+    directly or reloaded, the request reaches Flask, which has no such route,
+    so any path that is not a real file in the build gets index.html and React
+    shows the right page. /api paths are never handed over: an unknown API URL
+    must answer a JSON 404, not a web page.
+    """
+
+    @app.get("/", defaults={"path": ""})
+    @app.get("/<path:path>")
+    def frontend(path: str):
+        if path.startswith(API_PREFIX):
+            abort(404)
+        if not (dist / "index.html").is_file():
+            return (
+                "Al-Rahmeh Association for Animals - API is running.\n"
+                "The React frontend has not been built into static/dist yet.\n",
+                200,
+                {"Content-Type": "text/plain; charset=utf-8"},
+            )
+        if path:
+            # send_from_directory refuses anything that would resolve outside
+            # dist (../app.py and the like), so the build folder is the only
+            # thing this route can ever read.
+            try:
+                return send_from_directory(dist, path)
+            except NotFound:
+                pass
+        return send_from_directory(dist, "index.html")
 
 
 def main() -> None:
