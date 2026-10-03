@@ -5,6 +5,7 @@
 import { Link } from "react-router-dom";
 import { api, useApi } from "../api.js";
 import { BowlIcon, HeartIcon, HomeIcon, PawIcon } from "../art.jsx";
+import { ORG, WaysToHelp } from "./about.jsx";
 import { AnimalCard } from "./animals.jsx";
 
 const FEATURED = 3;
@@ -19,7 +20,7 @@ export function Home() {
       <section className="hero hero-home">
         <div className="hero-text">
           <p className="eyebrow">
-            <PawIcon size={18} /> Rescue, care and new beginnings in Jordan
+            <PawIcon size={18} /> Do you care? Get involved!
           </p>
           <h1>Every paw deserves a home</h1>
           <p className="lead">
@@ -44,7 +45,7 @@ export function Home() {
         <ul className="counters">
           <Counter
             icon={<HomeIcon size={28} />}
-            value={stats.status === "ok" ? stats.data.adopted : null}
+            value={stats.status === "ok" ? stats.data.homes_found : null}
             label="animals have found their forever homes"
           />
           <Counter
@@ -59,6 +60,17 @@ export function Home() {
           />
         </ul>
         <p className="muted small">These numbers are counted live from our records.</p>
+      </section>
+
+      <section aria-labelledby="help-heading">
+        <h2 id="help-heading" className="section-title">
+          Don't let them suffer
+        </h2>
+        <p className="lead">
+          So many animals in Jordan are still waiting for a home. Here's how you can change one
+          life today.
+        </p>
+        <WaysToHelp />
       </section>
 
       <section aria-labelledby="featured-heading">
@@ -79,6 +91,19 @@ export function Home() {
         <p className="center">
           <Link to="/animals">See everyone looking for a home →</Link>
         </p>
+      </section>
+
+      <section className="panel panel-warm save-a-life">
+        <h2>
+          <HeartIcon /> Save a life
+        </h2>
+        <p>
+          Follow our rescues day by day, share their stories, and help the right family find
+          them.
+        </p>
+        <a className="button" href={ORG.instagram} target="_blank" rel="noopener noreferrer">
+          See our animals on Instagram
+        </a>
       </section>
     </>
   );

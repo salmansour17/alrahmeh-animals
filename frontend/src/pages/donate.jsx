@@ -5,7 +5,8 @@
 import { useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { api, useApi, useSubmit } from "../api.js";
-import { BowlIcon, HeartIcon, HomeIcon, ShieldIcon } from "../art.jsx";
+import { BowlIcon, HeartIcon, HomeIcon, PawIcon, ShieldIcon } from "../art.jsx";
+import { ORG } from "./about.jsx";
 
 const AMOUNTS = [
   { value: "5.000", label: "5 JOD" },
@@ -161,6 +162,35 @@ export function Donate() {
       </form>
 
       <OtherWays />
+
+      <section className="panel where-it-goes" aria-labelledby="where-heading">
+        <h2 id="where-heading">Where your gift goes</h2>
+        <p>Caring for our animals costs around 60,000 US dollars a year, spent on:</p>
+        <ul className="costs">
+          <li>
+            <ShieldIcon /> Vet services
+          </li>
+          <li>
+            <HomeIcon /> Rent for the shelter
+          </li>
+          <li>
+            <BowlIcon /> Caretakers' salaries
+          </li>
+          <li>
+            <PawIcon /> Travel for animals adopted abroad
+          </li>
+        </ul>
+        <p className="muted small">
+          If 100 people give just 5 dinars, that's 500 dinars more for the animals than yesterday.
+        </p>
+        <p>
+          Giving from abroad? You can also support us through our{" "}
+          <a href={ORG.gofundme} target="_blank" rel="noopener noreferrer">
+            GoFundMe campaign
+          </a>
+          .
+        </p>
+      </section>
     </>
   );
 }

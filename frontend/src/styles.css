@@ -226,6 +226,50 @@ button:disabled { opacity: 0.6; cursor: progress; }
    assistive technology is told to skip it (aria-hidden on the wrapper). */
 .trap { position: absolute; left: -10000px; width: 1px; height: 1px; overflow: hidden; }
 
+/* --- content pages ------------------------------------------------------- */
+
+.ways { list-style: none; padding: 0; margin: 0; display: grid; gap: 1rem; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
+.way { background: var(--paper); border-radius: var(--round); padding: 1.3rem; box-shadow: var(--shadow); display: grid; gap: 0.4rem; align-content: start; }
+.way h3 { margin: 0; color: var(--teal); font-size: 1.3rem; }
+.way p { margin: 0; color: var(--muted); }
+.way a { font-weight: 800; color: var(--coral-deep); text-decoration: none; margin-top: 0.4rem; }
+.way-icon { color: var(--sage); }
+.story { max-width: 760px; }
+.story p { font-size: 1.08rem; }
+.story-facts { background: var(--paper); border-radius: var(--round); padding: 1rem 1.25rem; box-shadow: var(--shadow); }
+.costs { list-style: none; padding: 0; display: grid; gap: 0.5rem; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); }
+.costs li { display: flex; gap: 0.5rem; align-items: center; background: var(--cream); border-radius: 14px; padding: 0.6rem 0.9rem; }
+.costs .icon { color: var(--coral-deep); }
+.where-it-goes { max-width: 760px; }
+.save-a-life { margin-top: 2.5rem; text-align: center; }
+.save-a-life h2 { justify-content: center; }
+.contact-grid { display: grid; gap: 1.5rem; grid-template-columns: 1.6fr 1fr; align-items: start; }
+.links { list-style: none; padding: 0; margin: 0; display: grid; gap: 0.6rem; }
+.products .product { background: var(--paper); border-radius: var(--round); overflow: hidden; box-shadow: var(--shadow); display: flex; flex-direction: column; }
+.product-art { aspect-ratio: 16 / 9; border-radius: 0; color: var(--coral-deep); }
+.product h3 { margin: 0; font-size: 1.1rem; }
+.price { font-family: var(--heading); font-weight: 800; color: var(--teal); margin: 0.2rem 0 0.6rem; }
+.product .button { margin-top: auto; }
+.footer-links { display: flex; flex-wrap: wrap; justify-content: center; gap: 0.4rem 1.2rem; margin-bottom: 1rem; }
+.footer-links a { color: var(--teal); }
+
+/* --- staff portal --------------------------------------------------------- */
+
+.staff-signin { max-width: 420px; margin: 3rem auto; }
+.staff-top { display: flex; justify-content: space-between; align-items: center; gap: 1rem; }
+.staff-columns { display: grid; gap: 1.25rem; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); align-items: start; }
+.staff-list { list-style: none; padding: 0; margin: 0; display: grid; gap: 0.75rem; }
+.staff-item { background: var(--paper); border: 2px solid var(--sand); border-radius: 16px; padding: 0.9rem 1rem; display: grid; gap: 0.4rem; }
+.staff-item p { margin: 0; }
+.staff-line { padding: 0.3rem 0; border-bottom: 1px solid var(--sand); }
+.quote { background: var(--cream); border-radius: 10px; padding: 0.5rem 0.75rem; white-space: pre-wrap; }
+.row { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; }
+.row input:not([type="file"]) { flex: 1; min-width: 8rem; }
+.photo-input { font-weight: 600; font-size: 0.92rem; }
+select { font: inherit; padding: 0.55rem 0.75rem; border: 2px solid var(--sand); border-radius: 14px; background: var(--paper); }
+.success { color: var(--teal); font-weight: 700; margin: 0; }
+.badge-topic { background: var(--sage-soft); color: var(--teal); text-transform: capitalize; }
+
 /* --- friendly states ------------------------------------------------------ */
 
 .gentle { display: flex; gap: 0.5rem; align-items: center; justify-content: center; padding: 3rem 1rem; color: var(--muted); font-size: 1.1rem; text-align: center; }
@@ -248,5 +292,6 @@ a:focus-visible, button:focus-visible { outline: 3px solid var(--coral); outline
   .hero { grid-template-columns: 1fr; padding: 2rem 1.25rem; }
   .hero-art { display: none; }
   .profile { grid-template-columns: 1fr; }
+  .contact-grid { grid-template-columns: 1fr; }
   .profile-photo { max-width: 360px; margin: 0 auto; width: 100%; }
 }
