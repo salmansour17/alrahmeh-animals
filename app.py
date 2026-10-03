@@ -33,6 +33,9 @@ from domains.donations.models import OfflineMethods
 from domains.donations.payments import StripeGateway
 from domains.donations.routes import create_donations_blueprint
 from domains.donations.service import DonationService, PaymentGateway
+from domains.enquiries.repository import SqliteEnquiryRepository
+from domains.enquiries.routes import create_enquiries_blueprint
+from domains.enquiries.service import EnquiryService
 from security import require_admin
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
@@ -135,6 +138,9 @@ def create_app(config: Config | None = None) -> Flask:
         bank_account_name=config.bank_account_name,
     )
     app.register_blueprint(create_donations_blueprint(donation_service, offline))
+    app.register_blueprint(
+        create_enquiries_blueprint(EnquiryService(SqliteEnquiryRepository(database)))
+    )
 
     app.register_error_handler(HTTPException, _json_http_error)
     _register_meta_routes(app)

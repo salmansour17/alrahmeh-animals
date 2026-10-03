@@ -82,6 +82,18 @@ CREATE TABLE IF NOT EXISTS status_changes (
 CREATE INDEX IF NOT EXISTS idx_status_changes_animal ON status_changes (animal_id);
 
 
+-- Adoptions arranged entirely in person: for animals never entered here, or
+-- from before the site existed. Staff record them as dated entries with a
+-- count; the homepage's "found homes" figure adds them to the adopted animals
+-- on record, so every part of that number is something staff entered.
+CREATE TABLE IF NOT EXISTS offline_adoptions (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    animal_count INTEGER NOT NULL CHECK (animal_count > 0),
+    adopted_on  TEXT    NOT NULL,
+    note        TEXT,
+    recorded_at TEXT    NOT NULL DEFAULT (datetime('now'))
+);
+
 -- ===========================================================================
 -- Domain 2: donation and impact ledger
 -- ===========================================================================
@@ -151,3 +163,24 @@ CREATE TABLE IF NOT EXISTS stripe_payments (
     charged_currency     TEXT    NOT NULL,
     recorded_at          TEXT    NOT NULL DEFAULT (datetime('now'))
 );
+
+
+-- ===========================================================================
+-- Domain 3: enquiries (contact and volunteer messages)
+-- ===========================================================================
+
+-- What the public sends through the contact form. Personal data: staff-only,
+-- never logged. Staff mark each one handled once they have replied.
+CREATE TABLE IF NOT EXISTS enquiries (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    topic       TEXT    NOT NULL
+                        CHECK (topic IN ('volunteer', 'question', 'shop_order', 'other')),
+    name        TEXT    NOT NULL,
+    email       TEXT    NOT NULL,
+    subject     TEXT    NOT NULL,
+    message     TEXT    NOT NULL,
+    handled     INTEGER NOT NULL DEFAULT 0 CHECK (handled IN (0, 1)),
+    received_at TEXT    NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_enquiries_handled ON enquiries (handled);

@@ -27,7 +27,13 @@ def _imported_modules(source_file: Path) -> set[str]:
     return modules
 
 
-@pytest.mark.parametrize(("domain", "forbidden"), [("animals", "donations"), ("donations", "animals")])
+DOMAIN_NAMES = ("animals", "donations", "enquiries")
+
+
+@pytest.mark.parametrize(
+    ("domain", "forbidden"),
+    [(a, b) for a in DOMAIN_NAMES for b in DOMAIN_NAMES if a != b],
+)
 def test_domain_does_not_import_its_sibling(domain, forbidden):
     offenders = {
         str(source.relative_to(DOMAINS)): sorted(
