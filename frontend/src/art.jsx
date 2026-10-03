@@ -1,3 +1,6 @@
+import { Link as PillLink } from "react-router-dom";
+import logoUrl from "./logo.png";
+
 // Line icons and the drawn animal portraits used until a real photo exists.
 // All inline SVG: no image files, no icon library, and they take the text
 // colour, so they follow the palette in styles.css.
@@ -122,5 +125,82 @@ export function Portrait({ species, name }) {
       <path className="portrait-blob" d="M20 64C14 34 40 12 70 14s46 22 42 52-28 42-56 40S26 94 20 64z" />
       {kind === "cat" ? <CatFace /> : kind === "dog" ? <DogFace /> : <OtherFace />}
     </svg>
+  );
+}
+
+// --- shared visual pieces -----------------------------------------------------
+
+export const ArrowIcon = (props) => (
+  <Icon {...props}>
+    <path d="M5 12h13M13 6l6 6-6 6" />
+  </Icon>
+);
+
+// A filled paw print, for decoration (scattered paws, the logo).
+export function PawPrint({ size = 28, className = "" }) {
+  return (
+    <svg viewBox="0 0 24 24" width={size} height={size} className={`pawprint ${className}`} aria-hidden="true">
+      <ellipse cx="12" cy="16.2" rx="4.6" ry="3.8" fill="currentColor" />
+      <ellipse cx="5.6" cy="10.6" rx="2" ry="2.5" fill="currentColor" transform="rotate(-18 5.6 10.6)" />
+      <ellipse cx="9.4" cy="6.4" rx="2" ry="2.6" fill="currentColor" transform="rotate(-6 9.4 6.4)" />
+      <ellipse cx="14.6" cy="6.4" rx="2" ry="2.6" fill="currentColor" transform="rotate(6 14.6 6.4)" />
+      <ellipse cx="18.4" cy="10.6" rx="2" ry="2.5" fill="currentColor" transform="rotate(18 18.4 10.6)" />
+    </svg>
+  );
+}
+
+export function Cloud({ className = "" }) {
+  return (
+    <svg viewBox="0 0 120 48" className={`cloud ${className}`} aria-hidden="true">
+      <path
+        d="M14 40c-8 0-12-6-9-11 2-4 7-5 11-3 1-9 10-15 19-12 4-8 15-11 23-5 6 4 7 10 6 13 6-4 15-2 18 5 7-2 14 3 13 9-1 3-4 4-7 4z"
+        fill="#fff"
+        stroke="#e9ded6"
+        strokeWidth="1.5"
+      />
+    </svg>
+  );
+}
+
+// A pill button or link with the round arrow chip from the designs. Pass `to`
+// for a page link, `href` for an outside link, or neither for a button.
+export function Pill({ children, to, href, tone = "orange", className = "", ...rest }) {
+  const content = (
+    <>
+      <span>{children}</span>
+      <span className="pill-chip" aria-hidden="true">
+        <ArrowIcon size={16} />
+      </span>
+    </>
+  );
+  const classes = `pill pill-${tone} ${className}`;
+  if (to) return <PillLink to={to} className={classes} {...rest}>{content}</PillLink>;
+  if (href) return <a href={href} className={classes} {...rest}>{content}</a>;
+  return <button className={classes} {...rest}>{content}</button>;
+}
+
+// A round glowing icon button, like the heart and paw floating on the profile.
+export function Orb({ children, label, to, onClick, className = "" }) {
+  if (to) {
+    return (
+      <PillLink to={to} className={`orb ${className}`} aria-label={label}>
+        {children}
+      </PillLink>
+    );
+  }
+  return (
+    <button type="button" className={`orb ${className}`} aria-label={label} onClick={onClick}>
+      {children}
+    </button>
+  );
+}
+
+// The association's own logo (a dog and a cat held by two hands over a heart),
+// recoloured blue with a burnt-orange heart to match this site.
+export function Logo() {
+  return (
+    <span className="logo" aria-hidden="true">
+      <img src={logoUrl} alt="" width="46" height="51" />
+    </span>
   );
 }

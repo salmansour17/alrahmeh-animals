@@ -1,5 +1,6 @@
-import { Link, NavLink, Route, Routes } from "react-router-dom";
-import { HeartIcon, PawIcon } from "./art.jsx";
+import { useEffect } from "react";
+import { Link, NavLink, Route, Routes, useLocation } from "react-router-dom";
+import { HeartIcon, Logo, PawIcon } from "./art.jsx";
 import { About, Contact, ORG } from "./pages/about.jsx";
 import { AnimalDetail, AnimalList } from "./pages/animals.jsx";
 import { Donate, Thanks } from "./pages/donate.jsx";
@@ -11,19 +12,29 @@ import { StaffPortal } from "./pages/staff.jsx";
 const ARABIC_NAME = "جمعية الرحمة للرفق بالحيوان";
 
 export default function App() {
+  const location = useLocation();
+
+  // A new page starts at the top, like a normal website, instead of keeping
+  // the previous page's scroll position. Links to a section (#ask) still jump.
+  useEffect(() => {
+    if (!location.hash && !location.state?.keepScroll) window.scrollTo({ top: 0, behavior: "instant" });
+  }, [location.pathname, location.hash]);
+
+  // Moving from one animal's profile to another is not a new page: only the
+  // profile itself animates, so the container keeps the same key.
+  const pageKey = location.pathname.startsWith("/animals/") ? "animal-profile" : location.pathname;
+
   return (
     <>
       <header className="site-header">
-        <Link to="/" className="brand">
-          <span className="brand-mark">
-            <PawIcon size={22} />
-          </span>
-          <span>
-            Al-Rahmeh
-            <small>Association for Animals</small>
-            <small className="arabic" lang="ar" dir="rtl">
+        <Link to="/" className="brand" aria-label="Al-Rahmeh Association for Animals, home">
+          <Logo />
+          <span className="brand-text">
+            <span className="brand-name">Al-Rahmeh</span>
+            <span className="brand-sub">Association for Animals</span>
+            <span className="arabic" lang="ar" dir="rtl">
               {ARABIC_NAME}
-            </small>
+            </span>
           </span>
         </Link>
         <nav>
@@ -36,7 +47,8 @@ export default function App() {
           </NavLink>
         </nav>
       </header>
-      <main>
+      {/* Keyed by the path, so each page fades in as it arrives. */}
+      <main key={pageKey} className="page">
         <Routes>
           <Route path="/" element={<Home />} />
           <Route path="/animals" element={<AnimalList />} />
