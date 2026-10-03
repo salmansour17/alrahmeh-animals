@@ -57,6 +57,7 @@ export function staffApi(password) {
   const auth = { Authorization: `Basic ${toBase64(`staff:${password}`)}` };
   const get = (path) => request(path, {}, auth);
   const send = (path, data) => post(path, data, auth);
+  const put = (path, data) => request(path, { method: "PUT", body: JSON.stringify(data) }, auth);
   const id = encodeURIComponent;
   return {
     checkSignIn: () => get("/api/requests?status=open"),
@@ -69,6 +70,8 @@ export function staffApi(password) {
     offlineAdoptions: () => get("/api/animals/offline-adoptions"),
     recordOfflineAdoption: (entry) => send("/api/animals/offline-adoptions", entry),
     admit: (animal) => send("/api/animals", animal),
+    staffAnimal: (animalId) => get(`/api/animals/${id(animalId)}/staff`),
+    updateProfile: (animalId, profile) => put(`/api/animals/${id(animalId)}/profile`, profile),
     transition: (animalId, to) => send(`/api/animals/${id(animalId)}/transitions`, { to }),
     addMedicalRecord: (animalId, record) => send(`/api/animals/${id(animalId)}/medical-records`, record),
     uploadPhoto: (animalId, file) =>
@@ -92,12 +95,16 @@ function toBase64(text) {
 }
 
 // Load data for a page: { status: "loading" | "ok" | "error", data, error }.
-// A late answer for a page the visitor has already left is ignored.
-export function useApi(load, deps) {
+// A late answer for a page the visitor has already left is ignored. With
+// keepPrevious, what is on screen stays there (marked refreshing) until the
+// new data arrives, instead of flashing a loading state in between.
+export function useApi(load, deps, { keepPrevious = false } = {}) {
   const [state, setState] = useState({ status: "loading" });
   useEffect(() => {
     let current = true;
-    setState({ status: "loading" });
+    setState((previous) =>
+      keepPrevious && previous.status === "ok" ? { ...previous, refreshing: true } : { status: "loading" },
+    );
     load()
       .then((data) => current && setState({ status: "ok", data }))
       .catch((error) => current && setState({ status: "error", error }));

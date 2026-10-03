@@ -48,7 +48,7 @@ function SignIn({ onSignedIn }) {
         error.status === 401
           ? "That password isn't right."
           : error.status === 503
-            ? "Staff access is switched off on this server: ADMIN_PASSWORD is not set."
+            ? "Staff access isn't switched on for this site yet. Ask whoever runs the server to set the staff password."
             : error.message,
       );
       setChecking(false);
@@ -432,6 +432,7 @@ function AnimalsTab({ client }) {
 function AnimalRow({ animal, client, onChange }) {
   const [problem, setProblem] = useState(null);
   const [note, setNote] = useState(null);
+  const [editing, setEditing] = useState(false);
 
   async function act(action, success) {
     setProblem(null);
@@ -513,9 +514,73 @@ function AnimalRow({ animal, client, onChange }) {
         Photo (JPEG, PNG or WebP, up to 2 MB)
         <input type="file" accept="image/jpeg,image/png,image/webp" onChange={onPhoto} />
       </label>
+      <details onToggle={(event) => setEditing(event.currentTarget.open)}>
+        <summary>Profile for adopters (age, colour, personality, weight, about)</summary>
+        {editing && <ProfileEditor animal={animal} client={client} onSaved={(text) => setNote(text)} />}
+      </details>
       {note && <p className="success">{note}</p>}
       {problem && <p className="error">{problem}</p>}
     </li>
+  );
+}
+
+// The public "about me" details, loaded only when staff open the section.
+// Saving replaces the whole profile, so every field is sent, blank or not.
+function ProfileEditor({ animal, client, onSaved }) {
+  const current = useApi(() => client.staffAnimal(animal.id), [animal.id]);
+  const save = useSubmit((profile) => client.updateProfile(animal.id, profile));
+
+  if (current.status !== "ok") return <Listing state={current} empty="" items={() => []} />;
+  const profile = current.data.profile;
+
+  async function onSubmit(event) {
+    event.preventDefault();
+    const f = new FormData(event.currentTarget);
+    const saved = await save.submit(
+      filled({
+        born_on: f.get("born_on"),
+        colour: f.get("colour").trim(),
+        personality: f.get("personality").trim(),
+        weight_kg: f.get("weight_kg").trim(),
+        about: f.get("about").trim(),
+      }),
+    );
+    if (saved) onSaved(`${animal.name}'s profile saved.`);
+  }
+
+  return (
+    <form className="form" onSubmit={onSubmit}>
+      <label>
+        <span>
+          Date of birth <span className="muted">(an estimate is fine)</span>
+        </span>
+        <input name="born_on" type="date" max={today()} defaultValue={profile.born_on ?? ""} />
+      </label>
+      <label>
+        Colour
+        <input name="colour" maxLength={40} defaultValue={profile.colour ?? ""} placeholder="Rich golden" />
+      </label>
+      <label>
+        Personality
+        <input name="personality" maxLength={60} defaultValue={profile.personality ?? ""} placeholder="Friendly" />
+      </label>
+      <label>
+        <span>
+          Weight <span className="muted">(kg)</span>
+        </span>
+        <input name="weight_kg" inputMode="decimal" defaultValue={profile.weight_kg ?? ""} placeholder="12.5" />
+      </label>
+      <label>
+        <span>
+          About {animal.name} <span className="muted">(shown on the public profile)</span>
+        </span>
+        <textarea name="about" rows={3} maxLength={1000} defaultValue={profile.about ?? ""} />
+      </label>
+      <Outcome state={save} done="Saved." />
+      <button className="button" type="submit" disabled={save.sending}>
+        Save profile
+      </button>
+    </form>
   );
 }
 
