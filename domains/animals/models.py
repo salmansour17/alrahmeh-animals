@@ -12,6 +12,7 @@ the raw JSON through untouched; they never check a field themselves.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from datetime import date
 from enum import StrEnum
@@ -30,6 +31,16 @@ MESSAGE_MAX = 2000
 # not an absurd number typed by mistake.
 MAX_OFFLINE_ADOPTIONS = 10_000
 NOTE_MAX = 500
+COLOUR_MAX = 40
+PERSONALITY_MAX = 60
+ABOUT_MAX = 1000
+GRAMS_PER_KG = 1000
+MAX_WEIGHT_GRAMS = 150 * GRAMS_PER_KG  # no dog or cat in a rescue weighs more
+# Weight arrives as a string of kilograms ("12.5"), checked character by
+# character before it is converted, the same way as money: ASCII digits only,
+# at most three decimal places (grams).
+_WEIGHT_KG = re.compile(r"[0-9]{1,3}(\.[0-9]{1,3})?")
+MONTHS_PER_YEAR = 12
 
 # The adoption form has a field people never see. Bots fill in every field
 # they find, so a value here marks the request as spam (see is_honeypot).
@@ -256,6 +267,70 @@ class NewOfflineAdoption:
             adopted_on=_past_date(fields, "adopted_on", today),
             note=_optional_text(fields, "note", NOTE_MAX),
         )
+
+
+@dataclass(frozen=True)
+class AnimalProfile:
+    """The public "about me" details. Every field is optional."""
+
+    born_on: date | None = None
+    colour: str | None = None
+    personality: str | None = None
+    weight_grams: int | None = None
+    about: str | None = None
+
+    @classmethod
+    def from_payload(cls, payload: Any, today: date) -> AnimalProfile:
+        """A whole new profile: a field left out is cleared, not kept."""
+        fields = _fields(
+            payload,
+            required=set(),
+            optional={"born_on", "colour", "personality", "weight_kg", "about"},
+        )
+        born = fields.get("born_on")
+        return cls(
+            born_on=None if born in (None, "") else _past_date(fields, "born_on", today),
+            colour=_optional_text(fields, "colour", COLOUR_MAX),
+            personality=_optional_text(fields, "personality", PERSONALITY_MAX),
+            weight_grams=_weight_grams(fields.get("weight_kg")),
+            about=_optional_text(fields, "about", ABOUT_MAX),
+        )
+
+
+def age_text(born_on: date | None, today: date) -> str | None:
+    """How old an animal is, in the words a visitor would use."""
+    if born_on is None:
+        return None
+    months = (today.year - born_on.year) * MONTHS_PER_YEAR + today.month - born_on.month
+    if today.day < born_on.day:
+        months -= 1
+    if months < 1:
+        return "under a month"
+    if months < MONTHS_PER_YEAR:
+        return f"{months} month{'s' if months != 1 else ''}"
+    years = months // MONTHS_PER_YEAR
+    return f"{years} year{'s' if years != 1 else ''}"
+
+
+def weight_text(weight_grams: int | None) -> str | None:
+    """12500 -> "12.5 kg", with integer arithmetic only."""
+    if weight_grams is None:
+        return None
+    kilos, grams = divmod(weight_grams, GRAMS_PER_KG)
+    decimals = f"{grams:03d}".rstrip("0")
+    return f"{kilos}.{decimals} kg" if decimals else f"{kilos} kg"
+
+
+def _weight_grams(raw: Any) -> int | None:
+    if raw in (None, ""):
+        return None
+    if not isinstance(raw, str) or not _WEIGHT_KG.fullmatch(raw):
+        raise ValidationError('weight_kg must be a number of kilograms as a string, e.g. "12.5"')
+    whole, _, fraction = raw.partition(".")
+    grams = int(whole) * GRAMS_PER_KG + int(fraction.ljust(3, "0") or "0")
+    if not 0 < grams <= MAX_WEIGHT_GRAMS:
+        raise ValidationError(f"weight_kg must be more than 0 and at most {MAX_WEIGHT_GRAMS // GRAMS_PER_KG}")
+    return grams
 
 
 def is_honeypot(payload: Any) -> bool:

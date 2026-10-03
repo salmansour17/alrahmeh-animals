@@ -13,6 +13,7 @@ from typing import Any, Callable, Protocol
 
 from domains.animals.models import (
     Animal,
+    AnimalProfile,
     Decision,
     MedicalRecord,
     MedicalRecordType,
@@ -164,6 +165,10 @@ class AnimalRepository(Protocol):
 
     def add_offline_adoption(self, adoption: NewOfflineAdoption) -> OfflineAdoption: ...
 
+    def profile(self, animal_id: int) -> AnimalProfile | None: ...
+
+    def save_profile(self, animal_id: int, profile: AnimalProfile) -> None: ...
+
     def offline_adoptions(self) -> list[OfflineAdoption]: ...
 
     def offline_adoption_total(self) -> int: ...
@@ -236,6 +241,21 @@ class AnimalService:
         outside it. Every part of the figure is an entered record."""
         adopted_here = self._repository.count_by_status().get(PlacementStatus.ADOPTED, 0)
         return adopted_here + self._repository.offline_adoption_total()
+
+    def profile(self, animal_id: int) -> AnimalProfile:
+        """The animal's public profile; an empty one if none was written yet."""
+        self.get(animal_id)
+        return self._repository.profile(animal_id) or AnimalProfile()
+
+    def update_profile(self, animal_id: int, payload: Any) -> AnimalProfile:
+        profile = AnimalProfile.from_payload(payload, self._today())
+        self.get(animal_id)
+        self._repository.save_profile(animal_id, profile)
+        return profile
+
+    def today(self) -> date:
+        """The service's calendar date, for presenting ages."""
+        return self._today()
 
     def record_offline_adoption(self, payload: Any) -> OfflineAdoption:
         return self._repository.add_offline_adoption(
