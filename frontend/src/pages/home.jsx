@@ -4,7 +4,7 @@
 // never a guess.
 import { Link } from "react-router-dom";
 import { api, useApi } from "../api.js";
-import { BowlIcon, HeartIcon, HomeIcon, PawIcon } from "../art.jsx";
+import { BowlIcon, Cloud, HeartIcon, HomeIcon, PawPrint, Pill, Portrait } from "../art.jsx";
 import { ORG, WaysToHelp } from "./about.jsx";
 import { AnimalCard } from "./animals.jsx";
 
@@ -14,28 +14,42 @@ export function Home() {
   const stats = useApi(() => api.placementStats(), []);
   const impact = useApi(() => api.impact(), []);
   const animals = useApi(() => api.listAnimals("available"), []);
+  const available = animals.status === "ok" ? animals.data.animals : [];
+  // The hero shows a real animal looking for a home, preferably one with a photo.
+  const star = available.find((a) => a.photo_url) ?? available[0];
 
   return (
     <>
-      <section className="hero hero-home">
-        <div className="hero-text">
-          <p className="eyebrow">
-            <PawIcon size={18} /> Do you care? Get involved!
-          </p>
-          <h1>Every paw deserves a home</h1>
-          <p className="lead">
-            We rescue dogs and cats, nurse them back to health, and help them find families who
-            will love them for life. You can be part of their story.
-          </p>
-          <div className="actions">
-            <Link className="button" to="/animals">
-              Meet the animals
-            </Link>
-            <Link className="button button-soft" to="/donate">
-              <HeartIcon size={18} /> Donate
-            </Link>
-          </div>
+      <section className="hero-fluffy">
+        <Cloud className="cloud-1" />
+        <Cloud className="cloud-2" />
+        <Cloud className="cloud-3" />
+        <PawPrint size={46} className="paw-1" />
+        <PawPrint size={40} className="paw-2" />
+        <p className="eyebrow">
+          <HeartIcon size={16} /> Do you care? Get involved!
+        </p>
+        <h1>Where every paw finds a home</h1>
+        <p className="lead">
+          We rescue dogs and cats in Jordan, nurse them back to health, and help them find families
+          who will love them for life.
+        </p>
+        <div className="hero-photo">
+          {star?.photo_url ? (
+            <img src={star.photo_url} alt={`${star.name}, waiting for a home`} />
+          ) : (
+            <Portrait species={star?.species ?? "dog"} name={star?.name ?? "our friends"} />
+          )}
         </div>
+        <Link to="/animals?species=dog" className="blob-tag blob-dogs">
+          Dogs
+        </Link>
+        <Link to="/animals?species=cat" className="blob-tag blob-cats">
+          Cats
+        </Link>
+        <Pill to="/animals" tone="mustard">
+          Meet the animals
+        </Pill>
       </section>
 
       <section aria-labelledby="impact-heading">
@@ -44,17 +58,17 @@ export function Home() {
         </h2>
         <ul className="counters">
           <Counter
-            icon={<HomeIcon size={28} />}
+            icon={<HomeIcon size={24} />}
             value={stats.status === "ok" ? stats.data.homes_found : null}
             label="animals have found their forever homes"
           />
           <Counter
-            icon={<HeartIcon size={28} />}
+            icon={<HeartIcon size={24} />}
             value={impact.status === "ok" ? `${impact.data.total_raised.amount_jod} JOD` : null}
             label="raised for their food and care"
           />
           <Counter
-            icon={<BowlIcon size={28} />}
+            icon={<BowlIcon size={24} />}
             value={impact.status === "ok" ? impact.data.animals_helped : null}
             label="animals helped by gifts given just for them"
           />
@@ -66,10 +80,6 @@ export function Home() {
         <h2 id="help-heading" className="section-title">
           Don't let them suffer
         </h2>
-        <p className="lead">
-          So many animals in Jordan are still waiting for a home. Here's how you can change one
-          life today.
-        </p>
         <WaysToHelp />
       </section>
 
@@ -77,9 +87,9 @@ export function Home() {
         <h2 id="featured-heading" className="section-title">
           Waiting to meet you
         </h2>
-        {animals.status === "ok" && animals.data.animals.length > 0 ? (
+        {available.length > 0 ? (
           <ul className="cards">
-            {animals.data.animals.slice(0, FEATURED).map((animal) => (
+            {available.slice(0, FEATURED).map((animal) => (
               <AnimalCard key={animal.id} animal={animal} />
             ))}
           </ul>
@@ -88,22 +98,16 @@ export function Home() {
             {animals.status === "loading" ? "Fetching wagging tails…" : "New friends arrive every week."}
           </p>
         )}
-        <p className="center">
-          <Link to="/animals">See everyone looking for a home →</Link>
-        </p>
       </section>
 
-      <section className="panel panel-warm save-a-life">
-        <h2>
+      <section className="panel panel-warm center">
+        <h2 style={{ justifyContent: "center" }}>
           <HeartIcon /> Save a life
         </h2>
-        <p>
-          Follow our rescues day by day, share their stories, and help the right family find
-          them.
-        </p>
-        <a className="button" href={ORG.instagram} target="_blank" rel="noopener noreferrer">
+        <p>Follow our rescues day by day, share their stories, and help the right family find them.</p>
+        <Pill href={ORG.instagram} target="_blank" rel="noopener noreferrer">
           See our animals on Instagram
-        </a>
+        </Pill>
       </section>
     </>
   );

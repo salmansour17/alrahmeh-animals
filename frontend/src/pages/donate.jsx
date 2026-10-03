@@ -5,8 +5,8 @@
 import { useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { api, useApi, useSubmit } from "../api.js";
-import { BowlIcon, HeartIcon, HomeIcon, PawIcon, ShieldIcon } from "../art.jsx";
-import { ORG } from "./about.jsx";
+import { BowlIcon, HeartIcon, HomeIcon, PawIcon, Pill, ShieldIcon } from "../art.jsx";
+import { ORG, PageHead } from "./about.jsx";
 
 const AMOUNTS = [
   { value: "5.000", label: "5 JOD" },
@@ -67,130 +67,129 @@ export function Donate() {
 
   return (
     <>
-      <section className="hero hero-donate">
-        <div className="hero-text">
-          <p className="eyebrow">
-            <HeartIcon size={18} /> Every gift is a meal, a vaccine, a second chance
-          </p>
-          <h1>{earmarked ? `Help ${earmarked.name}` : "Give a rescued animal a better tomorrow"}</h1>
-          <p className="lead">
-            Al-Rahmeh runs on kindness. Whatever you can give, it reaches the animals in our care.
-          </p>
-        </div>
-      </section>
+      <PageHead
+        eyebrow="Every gift is a meal, a vaccine, a second chance"
+        title={earmarked ? `Help ${earmarked.name}` : "Give a rescued animal a better tomorrow"}
+      >
+        Al-Rahmeh runs on kindness. Whatever you can give, it reaches the animals in our care.
+      </PageHead>
 
-      <form className="donate" onSubmit={onSubmit}>
-        <fieldset>
-          <legend>How much would you like to give?</legend>
-          <div className="chips">
-            {AMOUNTS.map(({ value, label }) => (
-              <button
-                key={value}
-                type="button"
-                className={!custom && amount === value ? "chip active" : "chip"}
-                aria-pressed={!custom && amount === value}
-                onClick={() => {
-                  setAmount(value);
-                  setCustom("");
-                }}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
-          <label className="inline">
-            Or your own amount (JOD)
-            <input
-              inputMode="decimal"
-              placeholder="e.g. 15.500"
-              value={custom}
-              onChange={(event) => setCustom(event.target.value)}
-              maxLength={9}
-            />
-          </label>
-        </fieldset>
-
-        {earmarked ? (
-          <p className="panel panel-warm earmark">
-            <HeartIcon /> Your gift will go to <strong>{earmarked.name}</strong>'s care.{" "}
-            <Link to="/donate">Give to all the animals instead</Link>
-          </p>
-        ) : (
+      <div className="donate-grid">
+        <form className="donate" onSubmit={onSubmit}>
           <fieldset>
-            <legend>What should it help with?</legend>
-            <div className="purposes" role="radiogroup">
-              {PURPOSES.map((option) => (
+            <legend>How much would you like to give?</legend>
+            <div className="chips">
+              {AMOUNTS.map(({ value, label }) => (
                 <button
-                  key={option.value}
+                  key={value}
                   type="button"
-                  role="radio"
-                  aria-checked={purpose === option.value}
-                  className={purpose === option.value ? "purpose active" : "purpose"}
-                  onClick={() => setPurpose(option.value)}
+                  className={!custom && amount === value ? "chip active" : "chip"}
+                  aria-pressed={!custom && amount === value}
+                  onClick={() => {
+                    setAmount(value);
+                    setCustom("");
+                  }}
                 >
-                  {option.icon}
-                  <strong>{option.title}</strong>
-                  <span>{option.text}</span>
+                  {label}
                 </button>
               ))}
             </div>
+            <label className="inline">
+              Or your own amount (JOD)
+              <input
+                inputMode="decimal"
+                placeholder="e.g. 15.500"
+                value={custom}
+                onChange={(event) => setCustom(event.target.value)}
+                maxLength={9}
+              />
+            </label>
           </fieldset>
-        )}
 
-        <label>
-          <span>
-            Your name <span className="muted">(optional, so we can thank you)</span>
-          </span>
-          <input name="donor_name" maxLength={120} autoComplete="name" />
-        </label>
+          {earmarked ? (
+            <p className="panel panel-warm earmark">
+              <HeartIcon /> Your gift will go to <strong>{earmarked.name}</strong>'s care.{" "}
+              <Link to="/donate">Give to all the animals instead</Link>
+            </p>
+          ) : (
+            <fieldset>
+              <legend>What should it help with?</legend>
+              <div className="purposes" role="radiogroup">
+                {PURPOSES.map((option) => (
+                  <button
+                    key={option.value}
+                    type="button"
+                    role="radio"
+                    aria-checked={purpose === option.value}
+                    className={purpose === option.value ? "purpose active" : "purpose"}
+                    onClick={() => setPurpose(option.value)}
+                  >
+                    {option.icon}
+                    <strong>{option.title}</strong>
+                    <span>{option.text}</span>
+                  </button>
+                ))}
+              </div>
+            </fieldset>
+          )}
 
-        {status === "error" && !unavailable && <p className="error">{error.message}</p>}
-        {unavailable && (
-          <p className="panel">
-            Card donations are resting for a moment. You can still give by CliQ or bank transfer
-            below, and thank you for your patience.
+          <label>
+            <span>
+              Your name <span className="muted">(optional, so we can thank you)</span>
+            </span>
+            <input name="donor_name" maxLength={120} autoComplete="name" />
+          </label>
+
+          {status === "error" && !unavailable && <p className="error">{error.message}</p>}
+          {unavailable && (
+            <p className="panel">
+              Card donations are resting for a moment. You can still give by CliQ or bank transfer
+              below, and thank you for your patience.
+            </p>
+          )}
+
+          <Pill type="submit" disabled={sending}>
+            {sending ? "Taking you to secure payment…" : "Continue to secure payment"}
+          </Pill>
+          <p className="muted small">
+            Card payments are handled by Stripe and charged in US dollars at the Central Bank of
+            Jordan's fixed rate. We never see your card details.
           </p>
-        )}
+        </form>
 
-        <button className="button button-big" type="submit" disabled={sending}>
-          {sending ? "Taking you to secure payment…" : "Continue to secure payment"}
-        </button>
-        <p className="muted small">
-          Card payments are handled by Stripe and charged in US dollars at the Central Bank of
-          Jordan's fixed rate. We never see your card details.
-        </p>
-      </form>
+        <div className="side-stack">
+          <OtherWays />
 
-      <OtherWays />
-
-      <section className="panel where-it-goes" aria-labelledby="where-heading">
-        <h2 id="where-heading">Where your gift goes</h2>
-        <p>Caring for our animals costs around 60,000 US dollars a year, spent on:</p>
-        <ul className="costs">
-          <li>
-            <ShieldIcon /> Vet services
-          </li>
-          <li>
-            <HomeIcon /> Rent for the shelter
-          </li>
-          <li>
-            <BowlIcon /> Caretakers' salaries
-          </li>
-          <li>
-            <PawIcon /> Travel for animals adopted abroad
-          </li>
-        </ul>
-        <p className="muted small">
-          If 100 people give just 5 dinars, that's 500 dinars more for the animals than yesterday.
-        </p>
-        <p>
-          Giving from abroad? You can also support us through our{" "}
-          <a href={ORG.gofundme} target="_blank" rel="noopener noreferrer">
-            GoFundMe campaign
-          </a>
-          .
-        </p>
-      </section>
+          <section className="panel where-it-goes" aria-labelledby="where-heading">
+            <h2 id="where-heading">Where your gift goes</h2>
+            <p>Caring for our animals costs around 60,000 US dollars a year, spent on:</p>
+            <ul className="costs">
+              <li>
+                <ShieldIcon /> Vet services
+              </li>
+              <li>
+                <HomeIcon /> Rent for the shelter
+              </li>
+              <li>
+                <BowlIcon /> Caretakers' salaries
+              </li>
+              <li>
+                <PawIcon /> Travel for animals adopted abroad
+              </li>
+            </ul>
+            <p className="muted small">
+              If 100 people give just 5 dinars, that's 500 dinars more for the animals than yesterday.
+            </p>
+            <p>
+              Giving from abroad? You can also support us through our{" "}
+              <a href={ORG.gofundme} target="_blank" rel="noopener noreferrer">
+                GoFundMe campaign
+              </a>
+              .
+            </p>
+          </section>
+        </div>
+      </div>
     </>
   );
 }

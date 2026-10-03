@@ -7,7 +7,7 @@
 import { useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { api, useSubmit } from "../api.js";
-import { BowlIcon, CalendarIcon, HeartIcon, HomeIcon, PawIcon, ShieldIcon } from "../art.jsx";
+import { BowlIcon, HeartIcon, HomeIcon, PawIcon, PawPrint, Pill, ShieldIcon } from "../art.jsx";
 import { PRODUCTS } from "./shop.jsx";
 
 export const ORG = {
@@ -19,28 +19,28 @@ export const ORG = {
 
 const WAYS_TO_HELP = [
   {
-    icon: <HomeIcon size={28} />,
+    icon: <HomeIcon size={72} />,
     title: "Adopt",
     text: "Visit with our dogs who are ready for adoption. Come and meet your perfect match today!",
     link: "/animals?status=available",
     action: "Meet the animals",
   },
   {
-    icon: <PawIcon size={28} />,
+    icon: <PawIcon size={72} />,
     title: "Foster",
     text: "Without fostering, there can be no rescue. Every year we save the lives of over 100 dogs.",
     link: "/animals?status=available",
     action: "Become a foster home",
   },
   {
-    icon: <HeartIcon size={28} />,
+    icon: <HeartIcon size={72} />,
     title: "Donate",
     text: "Every little bit counts! Your generous donation helps the animals most in need.",
     link: "/donate",
     action: "Give today",
   },
   {
-    icon: <ShieldIcon size={28} />,
+    icon: <ShieldIcon size={72} />,
     title: "Volunteer",
     text: "Your time can help animals in ways we could never manage alone.",
     link: "/contact?topic=volunteer",
@@ -50,75 +50,90 @@ const WAYS_TO_HELP = [
 
 export function WaysToHelp() {
   return (
-    <ul className="ways">
+    <ul className="cards">
       {WAYS_TO_HELP.map((way) => (
-        <li key={way.title} className="way">
-          <span className="way-icon">{way.icon}</span>
-          <h3>{way.title}</h3>
-          <p>{way.text}</p>
-          <Link to={way.link}>{way.action} →</Link>
+        <li key={way.title}>
+          <Link to={way.link} className="fcard">
+            <div className="fcard-top">{way.icon}</div>
+            <div className="fcard-panel">
+              <h3>{way.title}</h3>
+              <p>{way.text}</p>
+              <span className="fcard-link">{way.action}</span>
+            </div>
+          </Link>
         </li>
       ))}
     </ul>
   );
 }
 
+export function PageHead({ eyebrow, title, children }) {
+  return (
+    <section className="page-head">
+      <PawPrint size={44} className="paw-1" />
+      <PawPrint size={36} className="paw-2" />
+      <p className="eyebrow">{eyebrow}</p>
+      <h1>{title}</h1>
+      <p className="lead">{children}</p>
+    </section>
+  );
+}
+
 export function About() {
   return (
     <>
-      <section className="hero">
-        <div className="hero-text">
-          <p className="eyebrow">
-            <PawIcon size={18} /> Who we are
-          </p>
-          <h1>Al Rahmeh Association for Animals</h1>
-          <p className="lead">
-            An animal rescue charity in Jordan, spreading the word about the work we do and reaching
-            out to people here in Jordan and beyond.
-          </p>
-        </div>
-      </section>
+      <PageHead eyebrow="About us · who we are" title="Al Rahmeh Association for Animals">
+        An animal rescue charity in Jordan, spreading the word about the work we do and reaching
+        out to people here in Jordan and beyond.
+      </PageHead>
 
       <section className="story" aria-labelledby="story-heading">
-        <h2 id="story-heading" className="section-title">
-          Our story
-        </h2>
-        <p>
-          Al Rahmeh began when a group of animal lovers decided to build a much-needed organisation
-          to counter the abuse and demonisation of the Canaan dog breed in Jordan, and of animals in
-          general.
-        </p>
-        <p>
-          There were, and still are, many campaigns pursuing the annihilation of stray dogs in
-          Jordan, most of them of the ancient Canaan dog breed and village dogs. We stand up for
-          them.
-        </p>
-        <ul className="facts story-facts">
+        <div>
+          <h2 id="story-heading" className="section-title">
+            Our story
+          </h2>
+          <p>
+            Al Rahmeh began when a group of animal lovers decided to build a much-needed
+            organisation to counter the abuse and demonisation of the Canaan dog breed in Jordan,
+            and of animals in general.
+          </p>
+          <p>
+            There were, and still are, many campaigns pursuing the annihilation of stray dogs in
+            Jordan, most of them of the ancient Canaan dog breed and village dogs. We stand up for
+            them.
+          </p>
+          <p>
+            Canaan dogs and village dogs are often overlooked in Jordan, and many find their
+            families abroad, in the United States and Canada. We arrange those journeys as well as
+            adoptions here at home.
+          </p>
+        </div>
+        <ul className="story-facts panel">
           <li>
-            <CalendarIcon /> Founded in January 2018
+            <span className="fact-label">Founded</span>
+            <span className="fact-value">January 2018</span>
           </li>
           <li>
-            <HomeIcon /> More than 300 dogs fostered since then, on a farm we rent in Madaba
+            <span className="fact-label">Dogs fostered since</span>
+            <span className="fact-value">More than 300</span>
           </li>
           <li>
-            <HeartIcon /> Funded entirely by our members' continuing contributions
+            <span className="fact-label">Our shelter</span>
+            <span className="fact-value">A rented farm in Madaba</span>
+          </li>
+          <li>
+            <span className="fact-label">Funded by</span>
+            <span className="fact-value">Our members' contributions</span>
           </li>
         </ul>
-        <p>
-          Canaan dogs and village dogs are often overlooked in Jordan, and many find their families
-          abroad, in the United States and Canada. We arrange those journeys as well as adoptions
-          here at home.
-        </p>
       </section>
 
       <section aria-labelledby="costs-heading">
         <h2 id="costs-heading" className="section-title">
           What it takes
         </h2>
-        <p>
-          Caring for our animals costs around 60,000 US dollars a year. Your gifts pay for:
-        </p>
-        <ul className="costs">
+        <p className="lead">Caring for our animals costs around 60,000 US dollars a year. Your gifts pay for:</p>
+        <ul className="costs" style={{ marginTop: "1rem" }}>
           <li>
             <ShieldIcon /> Vet services
           </li>
@@ -132,6 +147,7 @@ export function About() {
             <PawIcon /> Travel for animals adopted abroad
           </li>
         </ul>
+        <Pill to="/donate">Help with a gift</Pill>
       </section>
 
       <section aria-labelledby="help-heading">
@@ -176,18 +192,10 @@ export function Contact() {
 
   return (
     <>
-      <section className="hero">
-        <div className="hero-text">
-          <p className="eyebrow">
-            <HeartIcon size={18} /> We'd love to hear from you
-          </p>
-          <h1>Contact us &amp; get involved</h1>
-          <p className="lead">
-            Questions, gift shop orders, or a few free hours for the animals: write to us and our
-            team will reply by email.
-          </p>
-        </div>
-      </section>
+      <PageHead eyebrow="We'd love to hear from you" title="Contact us & get involved">
+        Questions, gift shop orders, or a few free hours for the animals: write to us and our team
+        will reply by email.
+      </PageHead>
 
       <div className="contact-grid">
         {status === "done" ? (
@@ -257,9 +265,9 @@ export function Contact() {
               </label>
             </div>
             {status === "error" && <p className="error">{error.message}</p>}
-            <button className="button" type="submit" disabled={sending}>
+            <Pill type="submit" disabled={sending}>
               {sending ? "Sending…" : "Send message"}
-            </button>
+            </Pill>
             <p className="muted small">Only our team sees your details, and only to reply to you.</p>
           </form>
         )}

@@ -5,13 +5,14 @@
 // rebuilding, which is a known gap until the shop has a backend of its own.
 import { Link } from "react-router-dom";
 import { BowlIcon, HeartIcon, HomeIcon, PawIcon } from "../art.jsx";
+import { PageHead } from "./about.jsx";
 
 const CATEGORY_ICONS = {
-  Hoodies: <PawIcon size={64} />,
-  "T-shirts": <PawIcon size={64} />,
-  Mugs: <BowlIcon size={64} />,
-  "Dog beds": <HomeIcon size={64} />,
-  "Gifts & activities": <HeartIcon size={64} />,
+  Hoodies: <PawIcon size={72} />,
+  "T-shirts": <PawIcon size={72} />,
+  Mugs: <BowlIcon size={72} />,
+  "Dog beds": <HomeIcon size={72} />,
+  "Gifts & activities": <HeartIcon size={72} />,
 };
 
 // Prices are written exactly as the rescue lists them, in JOD.
@@ -39,44 +40,36 @@ const CATEGORIES = [...new Set(PRODUCTS.map((p) => p.category))];
 export function Shop() {
   return (
     <>
-      <section className="hero">
-        <div className="hero-text">
-          <p className="eyebrow">
-            <HeartIcon size={18} /> Shop and support us
-          </p>
-          <h1>Our gift shop</h1>
-          <p className="lead">
-            Hoodies, T-shirts, mugs, cosy dog beds and gifts for little ones. Everything you buy
-            helps the animals in our care.
-          </p>
-        </div>
-      </section>
+      <PageHead eyebrow="Shop and support us" title="Our gift shop">
+        Hoodies, T-shirts, mugs, cosy dog beds and gifts for little ones. Everything you buy helps
+        the animals in our care.
+      </PageHead>
 
       {CATEGORIES.map((category) => (
         <section key={category} aria-labelledby={`cat-${category}`}>
           <h2 id={`cat-${category}`} className="section-title">
             {category}
           </h2>
-          <ul className="cards products">
+          <ul className="cards">
             {PRODUCTS.filter((p) => p.category === category).map((product) => (
-              <li key={product.slug} className="product">
-                <div className="photo product-art" aria-hidden="true">
-                  {CATEGORY_ICONS[product.category]}
-                </div>
-                <div className="card-body">
-                  <h3>{product.name}</h3>
-                  <p className="price">{product.price}</p>
-                  <Link className="button button-soft" to={`/contact?topic=shop_order&product=${product.slug}`}>
-                    Order
-                  </Link>
-                </div>
+              <li key={product.slug}>
+                <Link to={`/contact?topic=shop_order&product=${product.slug}`} className="fcard">
+                  <div className="fcard-top" aria-hidden="true">
+                    {CATEGORY_ICONS[product.category]}
+                  </div>
+                  <div className="fcard-panel">
+                    <h3>{product.name}</h3>
+                    <p className="price">{product.price}</p>
+                    <span className="fcard-link">Order this</span>
+                  </div>
+                </Link>
               </li>
             ))}
           </ul>
         </section>
       ))}
 
-      <p className="muted small center">
+      <p className="muted small center" style={{ marginTop: "2rem" }}>
         Orders are confirmed by email: we'll check size and availability and tell you how to pay
         and collect.
       </p>
