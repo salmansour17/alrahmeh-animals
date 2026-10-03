@@ -15,6 +15,9 @@ from flask import Blueprint, Response, jsonify, request
 
 from domains.animals.models import (
     Animal,
+    AnimalProfile,
+    age_text,
+    weight_text,
     MedicalRecord,
     OfflineAdoption,
     PlacementRequest,
@@ -75,6 +78,14 @@ def create_animals_blueprint(
     def public(animal: Animal) -> dict:
         return {**_public(animal), "photo_url": photos.photo_url(animal.id)}
 
+    def profile(animal_id: int) -> dict:
+        return _profile(service.profile(animal_id), service)
+
+    @bp.put("/<int:animal_id>/profile")
+    @require_admin
+    def update_profile(animal_id: int):
+        return jsonify(_profile(service.update_profile(animal_id, request.get_json(silent=True)), service))
+
     @bp.get("/<int:animal_id>/photo")
     def get_photo(animal_id: int):
         response = Response(photos.photo(animal_id), mimetype="image/webp")
@@ -124,6 +135,7 @@ def create_animals_blueprint(
         vaccinations = service.vaccinations(animal_id)
         return jsonify(
             **public(animal),
+            profile=profile(animal_id),
             vaccinations=[
                 {"description": v.description, "occurred_on": v.occurred_on.isoformat()}
                 for v in vaccinations
@@ -148,6 +160,7 @@ def create_animals_blueprint(
         animal = service.get(animal_id)
         return jsonify(
             **public(animal),
+            profile=profile(animal_id),
             notes=animal.notes,
             medical_records=[_medical(r) for r in service.medical_history(animal_id)],
             status_history=[_change(c) for c in service.status_history(animal_id)],
@@ -218,6 +231,21 @@ def _request(placement: PlacementRequest) -> dict:
         "message": placement.message,
         "outcome": placement.outcome.value,
         "submitted_at": placement.submitted_at,
+    }
+
+
+def _profile(details: AnimalProfile, service: AnimalService) -> dict:
+    """Public profile. Age and weight are formatted here, on the server, so
+    the browser never does date or unit arithmetic; the raw values are kept
+    for the staff form."""
+    return {
+        "age": age_text(details.born_on, service.today()),
+        "born_on": details.born_on.isoformat() if details.born_on else None,
+        "colour": details.colour,
+        "personality": details.personality,
+        "weight": weight_text(details.weight_grams),
+        "weight_kg": weight_text(details.weight_grams).removesuffix(" kg") if details.weight_grams else None,
+        "about": details.about,
     }
 
 

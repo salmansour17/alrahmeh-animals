@@ -303,3 +303,33 @@ def test_missing_animal_or_photo_is_404(client):
     animal_id = _admit(client)
     assert client.get(f"/api/animals/{animal_id}/photo").status_code == 404
     assert client.get(f"/api/animals/{animal_id}").get_json()["photo_url"] is None
+
+
+# --- public profile details over HTTP -------------------------------------------
+
+
+def test_staff_write_the_profile_and_the_public_read_it_formatted(client):
+    animal_id = _admit(client)
+    details = {"born_on": "2026-01-15", "colour": "Rich golden", "personality": "Friendly",
+               "weight_kg": "12.5", "about": "Loves everyone he meets."}
+
+    assert client.put(f"/api/animals/{animal_id}/profile", json=details).status_code == 401
+    saved = client.put(f"/api/animals/{animal_id}/profile", json=details, headers=STAFF)
+    assert saved.status_code == 200
+
+    profile = client.get(f"/api/animals/{animal_id}").get_json()["profile"]
+    assert profile["weight"] == "12.5 kg" and profile["weight_kg"] == "12.5"
+    assert profile["colour"] == "Rich golden" and profile["about"] == "Loves everyone he meets."
+    assert profile["age"].endswith("months")
+    assert client.get(f"/api/animals/{animal_id}/staff", headers=STAFF).get_json()["profile"] == profile
+
+
+def test_an_animal_without_a_profile_has_empty_details(client):
+    profile = client.get(f"/api/animals/{_admit(client)}").get_json()["profile"]
+    assert set(profile.values()) == {None}
+
+
+def test_a_bad_profile_is_400(client):
+    response = client.put(f"/api/animals/{_admit(client)}/profile", json={"weight_kg": 12}, headers=STAFF)
+    assert (response.status_code, response.get_json()["error"]) == (400, "validation_failed")
+
