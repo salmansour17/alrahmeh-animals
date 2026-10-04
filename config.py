@@ -57,6 +57,10 @@ class Config:
     bank_name: str | None = None
     bank_iban: str | None = None
     bank_account_name: str | None = None
+    # Add sample animals at startup when there are none. Off unless asked for,
+    # so a Config built directly (as every test does) starts empty; the
+    # environment default in load_config turns it on.
+    sample_animals: bool = False
 
     @property
     def database_path(self) -> Path:
@@ -87,6 +91,7 @@ def load_config() -> Config:
         bank_name=_read_optional("BANK_NAME"),
         bank_iban=_read_optional("BANK_IBAN"),
         bank_account_name=_read_optional("BANK_ACCOUNT_NAME"),
+        sample_animals=os.environ.get("SAMPLE_ANIMALS", "1").strip() != "0",
     )
 
 

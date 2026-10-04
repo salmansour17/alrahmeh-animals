@@ -37,6 +37,7 @@ from domains.donations.service import DonationService, PaymentGateway
 from domains.enquiries.repository import SqliteEnquiryRepository
 from domains.enquiries.routes import create_enquiries_blueprint
 from domains.enquiries.service import EnquiryService
+from sample_animals import add_sample_animals
 from security import require_admin
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
@@ -136,6 +137,8 @@ def create_app(config: Config | None = None) -> Flask:
     # services, would be a change to these lines alone.
     animal_service = AnimalService(SqliteAnimalRepository(database), today=amman_today)
     placement_service = PlacementService(SqlitePlacementRepository(database), animal_service)
+    if config.sample_animals:
+        add_sample_animals(animal_service)
     photo_service = PhotoService(
         animal_service, FileSystemPhotoStore(config.photos_dir), prepare=prepare_photo
     )
