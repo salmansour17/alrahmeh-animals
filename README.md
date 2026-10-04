@@ -264,7 +264,7 @@ records what the tests deliberately leave thin.
 | `POST /api/animals/<id>/medical-records` | staff | Add a medical record |
 | `PUT /api/animals/<id>/profile` | staff | Set the public profile: age, colour, personality, weight, about |
 | `GET /api/animals/<id>/photo` | public | The animal's photo (WebP, metadata stripped) |
-| `PUT /api/animals/<id>/photo` | staff | Upload a photo (JPEG, PNG or WebP, up to 2 MB) |
+| `PUT /api/animals/<id>/photo` | staff | Upload a photo (JPEG, PNG or WebP, up to 10 MB) |
 | `POST /api/animals/<id>/requests` | public | Ask to adopt or foster this animal |
 | `GET /api/requests` | staff | Adoption and foster requests (`?status=open`) |
 | `POST /api/requests/<id>/decision` | staff | Approve or decline a request |

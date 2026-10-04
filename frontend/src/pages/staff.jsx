@@ -433,6 +433,7 @@ function AnimalRow({ animal, client, onChange }) {
   const [problem, setProblem] = useState(null);
   const [note, setNote] = useState(null);
   const [editing, setEditing] = useState(false);
+  const [uploading, setUploading] = useState(false);
 
   async function act(action, success) {
     setProblem(null);
@@ -467,10 +468,16 @@ function AnimalRow({ animal, client, onChange }) {
     event.target.reset();
   }
 
-  function onPhoto(event) {
-    const file = event.target.files[0];
-    if (file) act(() => client.uploadPhoto(animal.id, file), "Photo uploaded.");
-    event.target.value = "";
+  async function onPhoto(event) {
+    const input = event.target;
+    const file = input.files[0];
+    // Cleared at once, so picking the same file again still uploads it. The
+    // thumbnail and the button, not the browser's file field, show the result.
+    input.value = "";
+    if (!file) return;
+    setUploading(true);
+    await act(() => client.uploadPhoto(animal.id, file), `Photo uploaded: ${file.name}`);
+    setUploading(false);
   }
 
   return (
@@ -510,10 +517,22 @@ function AnimalRow({ animal, client, onChange }) {
           Add
         </button>
       </form>
-      <label className="row photo-input">
-        Photo (JPEG, PNG or WebP, up to 2 MB)
-        <input type="file" accept="image/jpeg,image/png,image/webp" onChange={onPhoto} />
-      </label>
+      <div className="row photo-input">
+        {animal.photo_url && (
+          <img className="photo-thumb" src={animal.photo_url} alt={`Current photo of ${animal.name}`} />
+        )}
+        <label className="button button-soft">
+          {uploading ? "Uploading…" : animal.photo_url ? "Replace photo" : "Add a photo"}
+          <input
+            className="visually-hidden"
+            type="file"
+            accept="image/jpeg,image/png,image/webp"
+            onChange={onPhoto}
+            disabled={uploading}
+          />
+        </label>
+        <span className="muted small">JPEG, PNG or WebP, up to 10 MB</span>
+      </div>
       <details onToggle={(event) => setEditing(event.currentTarget.open)}>
         <summary>Profile for adopters (age, colour, personality, weight, about)</summary>
         {editing && <ProfileEditor animal={animal} client={client} onSaved={(text) => setNote(text)} />}

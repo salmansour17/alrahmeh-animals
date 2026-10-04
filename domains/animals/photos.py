@@ -19,7 +19,10 @@ from PIL import Image, ImageOps, UnidentifiedImageError
 
 from domains.animals.service import InvalidPhoto, UnsupportedPhotoType
 
-MAX_PHOTO_BYTES = 2 * 1024 * 1024
+# A phone photo is commonly 3-8 MB. The file size is not what protects memory
+# (MAX_DECODED_PIXELS below does that), and every upload is shrunk and
+# re-encoded, so the stored copy stays small whatever arrives.
+MAX_PHOTO_BYTES = 10 * 1024 * 1024
 MAX_PHOTO_SIDE = 1600
 WEBP_QUALITY = 82
 VERSION_STEP_NS = 1_000_000

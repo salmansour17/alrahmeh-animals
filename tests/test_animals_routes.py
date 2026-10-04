@@ -290,10 +290,12 @@ def test_the_public_cannot_upload(client):
 
 def test_the_size_limit_is_raised_for_the_photo_route_only(client):
     animal_id = _admit(client)
-    three_mb = b"\xff\xd8\xff" + b"0" * (3 * 1024 * 1024)
-    assert _upload(client, animal_id, three_mb).status_code == 413
-    # One megabyte fits under the photo limit (it fails later, as not an image)...
-    assert _upload(client, animal_id, b"0" * (1024 * 1024)).status_code == 400
+    eleven_mb = b"\xff\xd8\xff" + b"0" * (11 * 1024 * 1024)
+    too_big = _upload(client, animal_id, eleven_mb)
+    assert too_big.status_code == 413
+    assert "at most 10 MB" in too_big.get_json()["detail"]
+    # A phone-sized file fits under the photo limit (it fails later, as not an image)...
+    assert _upload(client, animal_id, b"0" * (5 * 1024 * 1024)).status_code == 400
     # ...but every other route still refuses anything over 64 KiB.
     big = client.post("/api/animals", data=b"0" * (100 * 1024), headers={**STAFF, "Content-Type": "application/json"})
     assert big.status_code == 413
