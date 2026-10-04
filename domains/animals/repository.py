@@ -169,13 +169,17 @@ class SqliteAnimalRepository:
         new: PlacementStatus,
         reason: str | None,
         close_open_requests: bool = False,
+        adoption_fell_through: bool = False,
     ) -> bool:
         """Move an animal from `expected` to `new`, recording the change.
 
         Returns False, and writes nothing, if the animal was no longer in
         `expected` by the time the UPDATE ran. With close_open_requests, every
         open adoption or foster request for the animal is declined in the same
-        transaction (used when an animal is adopted).
+        transaction (used when an animal is adopted). With
+        adoption_fell_through, its approved adoption is declined in the same
+        transaction (used when a pending animal goes back to available), while
+        backup requests stay open.
         """
         with self._database.unit_of_work() as connection:
             if not _move_animal(connection, StatusMove(animal_id, expected, new, reason)):
@@ -184,6 +188,17 @@ class SqliteAnimalRepository:
                 connection.execute(
                     "UPDATE placement_requests SET outcome = ? WHERE animal_id = ? AND outcome = ?",
                     (RequestOutcome.DECLINED.value, animal_id, RequestOutcome.OPEN.value),
+                )
+            if adoption_fell_through:
+                connection.execute(
+                    "UPDATE placement_requests SET outcome = ? "
+                    "WHERE animal_id = ? AND kind = ? AND outcome = ?",
+                    (
+                        RequestOutcome.DECLINED.value,
+                        animal_id,
+                        RequestKind.ADOPTION.value,
+                        RequestOutcome.APPROVED.value,
+                    ),
                 )
         return True
 

@@ -479,6 +479,25 @@ def test_when_the_approved_adoption_falls_through_the_next_can_be_approved(
     assert service.get(animal_id).status is S.PENDING
 
 
+def test_moving_a_pending_animal_back_by_hand_declines_its_approved_adoption(
+    service, placements, placement_repository
+):
+    animal_id = _animal_in(service, S.AVAILABLE)
+    first, backup = _ask(placements, animal_id), _ask(placements, animal_id)
+    placements.decide(first.id, {"outcome": "approved"})
+
+    service.transition(animal_id, {"to": "available", "reason": "Fell through"})
+
+    # Same result as declining it: the approval ends, the backup stays open,
+    # and the backup can then be approved without two approvals coexisting.
+    assert _outcome(placement_repository, first.id) is RequestOutcome.DECLINED
+    assert _outcome(placement_repository, backup.id) is RequestOutcome.OPEN
+    placements.decide(backup.id, {"outcome": "approved"})
+    approved = placements.list_requests("approved")
+    assert [request.id for request in approved] == [backup.id]
+    assert service.get(animal_id).status is S.PENDING
+
+
 def test_an_approved_foster_cannot_be_declined(service, placements):
     request = _ask(placements, _animal_in(service, S.AVAILABLE), K.FOSTER)
     placements.decide(request.id, {"outcome": "approved"})
