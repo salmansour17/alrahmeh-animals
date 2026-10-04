@@ -356,7 +356,14 @@ code { background: var(--blush); padding: 0.1rem 0.45rem; border-radius: 8px; }
 .quote { background: var(--paper); border-radius: 12px; padding: 0.55rem 0.8rem; white-space: pre-wrap; }
 .row { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; }
 .row input:not([type="file"]) { flex: 1; min-width: 8rem; }
-.photo-input { font-size: 0.92rem; }
+.photo-input { font-size: 0.92rem; align-items: center; }
+.photo-input label.button { cursor: pointer; }
+.photo-input label.button:focus-within { outline: 2px solid currentColor; outline-offset: 2px; }
+.photo-thumb { width: 48px; height: 48px; object-fit: cover; border-radius: 8px; }
+.visually-hidden {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+}
 .button-small { padding: 0.4rem 0.45rem 0.4rem 0.95rem; font-size: 0.9rem; }
 .button-small .pill-chip { width: 1.7rem; height: 1.7rem; }
 

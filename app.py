@@ -20,7 +20,7 @@ from werkzeug.routing import IntegerConverter
 
 from config import Config, load_config
 from db.connection import Database
-from domains.animals.photos import FileSystemPhotoStore, prepare_photo
+from domains.animals.photos import MAX_PHOTO_BYTES, FileSystemPhotoStore, prepare_photo
 from domains.animals.repository import SqliteAnimalRepository, SqlitePlacementRepository
 from domains.animals.routes import create_animals_blueprint, create_requests_blueprint
 from domains.animals.service import (
@@ -202,7 +202,14 @@ def _json_http_error(error: HTTPException):
     """Answer Flask's own errors (unknown URL, wrong method) in JSON, like the
     domain errors, instead of an HTML page. Unhandled exceptions still become a
     bare 500 with no traceback, because debug is off unless FLASK_DEBUG=1."""
-    return jsonify(error=error.name.lower().replace(" ", "_")), error.code
+    name = error.name.lower().replace(" ", "_")
+    if error.code == 413:
+        # Said in words, because the staff portal shows `detail` to the user.
+        photo_mb = MAX_PHOTO_BYTES // (1024 * 1024)
+        other_kb = MAX_REQUEST_BYTES // 1024
+        detail = f"Too large: a photo can be at most {photo_mb} MB, and any other request {other_kb} KB."
+        return jsonify(error=name, detail=detail), 413
+    return jsonify(error=name), error.code
 
 
 def _register_meta_routes(app: Flask) -> None:
