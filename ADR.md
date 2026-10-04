@@ -34,6 +34,9 @@ the repository layer rather than generated at runtime — more code to write, bu
 no query behaviour I cannot account for. Flask returns JSON only; the user
 interface is a React bundle that this same process serves as static files, a
 split agreed with the course instructor and recorded in the README.
+(Update, 2026-10-04: Stripe and Pillow later brought this to five Python
+dependencies, and the enquiries domain and the later features to nine tables;
+the reasoning above did not change.)
 
 ## 2. Each domain is a self-contained package that never imports the other
 
@@ -52,6 +55,9 @@ ledger needs to check an animal id, it will declare the small interface it
 needs in its own package, and `create_app` (the only module that imports both)
 will adapt the animal service to it. `tests/test_domain_boundary.py` reads
 every source file in both packages and fails if either imports its sibling.
+(Update, 2026-10-04: done as described, through `AnimalDirectory` in the
+donations service; the enquiries domain added later follows the same rule and
+the same test.)
 
 Alternatives considered: A layered layout (one `models.py`, one
 `repositories.py`, one `routes.py` for the whole app) was rejected because the

@@ -32,12 +32,12 @@ root. This project has two: `requirements.txt` for the Python process and
 `package.json` for the React frontend. The instructor approved the use of React
 for the user interface on 2026-09-25.
 
-> _(instructor's approval, quoted here — to be filled in)_
-
 Both manifests sit at the repository root; there are no per-folder manifests.
 The Node toolchain is a build-time dependency only: `static/dist` is committed,
 so a clone that installs `requirements.txt` and runs `python app.py` serves the
-full application with Node absent from the machine.
+full application with Node absent from the machine. The start command is
+always `python app.py`; `package.json` defines only the build scripts and is
+never needed to run the site.
 
 ## Requirements
 
@@ -216,19 +216,19 @@ Name                              Stmts   Miss  Cover
 -----------------------------------------------------
 domains/animals/models.py           242      0   100%
 domains/animals/photos.py            68      0   100%
-domains/animals/repository.py       116      0   100%
-domains/animals/service.py          171      0   100%
-domains/donations/models.py         160      0   100%
+domains/animals/repository.py       118      0   100%
+domains/animals/service.py          172      0   100%
+domains/donations/models.py         161      0   100%
 domains/donations/payments.py        67      0   100%
 domains/donations/repository.py      43      0   100%
 domains/donations/service.py         75      0   100%
-domains/enquiries/models.py          89      0   100%
+domains/enquiries/models.py          90      0   100%
 domains/enquiries/repository.py      25      0   100%
 domains/enquiries/service.py         21      0   100%
 -----------------------------------------------------
-TOTAL                              1077      0   100%
+TOTAL                              1082      0   100%
 
-398 passed
+404 passed
 ```
 
 ### Clean-clone check (2026-10-04)
@@ -245,7 +245,7 @@ configuration except `PORT=8765`, so it could not clash with a copy on 8000:
   the empty ledger.
 - `POST /api/donations/checkout` answered 503 and the log said why: without
   Stripe keys, card donations stay off and the rest of the site works.
-- `pytest --cov=domains` in the clone: 398 passed, 100%.
+- `pytest --cov=domains` in the clone: every test passed, 100%.
 
 100% line coverage says every line ran, not that every case is covered; ADR-4
 records what the tests deliberately leave thin.
@@ -279,6 +279,8 @@ records what the tests deliberately leave thin.
 | `POST /api/enquiries` | public | Send a contact or volunteer message |
 | `GET /api/enquiries` | staff | Messages (`?handled=false`) |
 | `POST /api/enquiries/<id>/handled` | staff | Mark a message handled |
+| `GET /api/health` | public | Liveness check; answers `{"status": "ok"}` |
+| `GET /api/meta/schema` | staff | Tables present, to confirm the schema applied itself |
 
 Amounts are sent as a string of Jordanian dinars, `"amount_jod": "25.500"`,
 never as a JSON number, and come back both as `amount_fils` (an integer) and as
