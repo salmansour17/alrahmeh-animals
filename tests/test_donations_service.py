@@ -166,6 +166,7 @@ def test_blank_donor_name_is_anonymous(service):
         ({"amount_jod": "5", "purpose": "general", "earmarked_animal_id": True}, "positive integer"),
         ({"amount_jod": "5", "purpose": "general", "earmarked_animal_id": "7"}, "positive integer"),
         ({"amount_jod": "5", "purpose": "general", "earmarked_animal_id": 0}, "positive integer"),
+        ({"amount_jod": "5", "purpose": "general", "earmarked_animal_id": 10**30}, "positive integer"),
         ({"amount_jod": "5", "purpose": "general", "received_on": "30/09/2026"}, "ISO date"),
         ({"amount_jod": "5", "purpose": "general", "received_on": 20260930}, "ISO date string"),
     ],
@@ -269,6 +270,7 @@ def test_list_is_newest_first_and_paginated(service):
         ("ten", None, "limit must be a whole number"),
         (None, "-5", "offset must be a whole number"),
         (None, "٥", "offset must be a whole number"),  # Arabic-Indic 5
+        (None, "99999999999999999999999", "offset must be a whole number"),  # beyond SQLite
     ],
 )
 def test_bad_pagination_is_rejected(service, limit, offset, complaint):

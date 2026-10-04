@@ -116,7 +116,7 @@ class AdoptionAlreadyApproved(RuntimeError):
 
     def __init__(self, animal: Animal) -> None:
         super().__init__(
-            f"{animal.name} already has an approved adoption; decline it or complete it first"
+            f"{animal.name} is already pending adoption; decline that adoption or complete it first"
         )
 
 
@@ -180,6 +180,7 @@ class AnimalRepository(Protocol):
         new: PlacementStatus,
         reason: str | None,
         close_open_requests: bool = False,
+        adoption_fell_through: bool = False,
     ) -> bool: ...
 
     def status_history(self, animal_id: int) -> list[StatusChange]: ...
@@ -277,8 +278,19 @@ class AnimalService:
         check_transition(animal.status, request.to)
         # Once an animal is adopted, nobody else's request can still be open.
         adopted = request.to is PlacementStatus.ADOPTED
+        # A pending animal moved back to available by hand means its approved
+        # adoption fell through, exactly as if staff had declined it; leaving it
+        # approved would let a second adoption be approved alongside it.
+        fell_through = (
+            animal.status is PlacementStatus.PENDING and request.to is PlacementStatus.AVAILABLE
+        )
         if not self._repository.change_status(
-            animal_id, animal.status, request.to, request.reason, close_open_requests=adopted
+            animal_id,
+            animal.status,
+            request.to,
+            request.reason,
+            close_open_requests=adopted,
+            adoption_fell_through=fell_through,
         ):
             raise TransitionConflict(animal_id, animal.status)
         return self.get(animal_id)

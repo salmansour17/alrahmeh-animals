@@ -105,7 +105,8 @@ def test_invalid_messages_are_rejected_without_echoing_personal_data(enquiries, 
 @pytest.mark.parametrize(
     ("handled", "limit", "offset", "complaint"),
     [("maybe", None, None, "handled must be"), (None, "0", None, "limit must be between"),
-     (None, "500", None, "limit must be between"), (None, None, "-1", "offset must be a whole number")],
+     (None, "500", None, "limit must be between"), (None, None, "-1", "offset must be a whole number"),
+     (None, None, "99999999999999999999999", "offset must be a whole number")],
 )
 def test_bad_list_filters_are_rejected(enquiries, handled, limit, offset, complaint):
     with pytest.raises(ValidationError, match=complaint):

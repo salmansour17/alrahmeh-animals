@@ -16,6 +16,7 @@ from pathlib import Path
 
 from flask import Flask, abort, jsonify, send_from_directory
 from werkzeug.exceptions import HTTPException, NotFound
+from werkzeug.routing import IntegerConverter
 
 from config import Config, load_config
 from db.connection import Database
@@ -49,6 +50,11 @@ AMMAN = timezone(timedelta(hours=3), "Asia/Amman")
 # Largest request body accepted anywhere. A Stripe webhook is a few kilobytes and
 # a donation form far less; anything bigger is refused with 413 before parsing.
 MAX_REQUEST_BYTES = 64 * 1024
+
+# The largest integer SQLite can store. A larger id in a URL could never match a
+# row, and handing it to sqlite3 raises OverflowError, which would surface as a
+# 500, so such a URL simply does not match a route and answers 404.
+SQLITE_MAX_INTEGER = 2**63 - 1
 
 STRIPE_TEST_KEY_PREFIX = "sk_test_"
 STRIPE_LIVE_KEY_PREFIX = "sk_live_"
@@ -92,6 +98,14 @@ class AnimalDirectoryAdapter:
         return True
 
 
+class SqliteIdConverter(IntegerConverter):
+    """Flask's <int:...> converter, capped at the largest value SQLite stores."""
+
+    def __init__(self, url_map, *args, **kwargs) -> None:
+        kwargs.setdefault("max", SQLITE_MAX_INTEGER)
+        super().__init__(url_map, *args, **kwargs)
+
+
 def create_app(config: Config | None = None) -> Flask:
     """Build the application.
 
@@ -103,6 +117,9 @@ def create_app(config: Config | None = None) -> Flask:
     app = Flask(__name__, static_folder=None)
     app.config["APP_CONFIG"] = config
     app.config["MAX_CONTENT_LENGTH"] = MAX_REQUEST_BYTES
+    # Before any blueprint is registered, so every <int:...> in every route
+    # uses the bounded converter.
+    app.url_map.converters["int"] = SqliteIdConverter
 
     config.data_dir.mkdir(parents=True, exist_ok=True)
 
@@ -187,14 +204,14 @@ def _json_http_error(error: HTTPException):
 
 def _register_meta_routes(app: Flask) -> None:
     """Endpoints that describe the service rather than either feature domain."""
-    config: Config = app.config["APP_CONFIG"]
     database: Database = app.config["DATABASE"]
 
     @app.get("/api/health")
     def health():
         """Liveness probe. Deliberately does not query the database, so it still
-        answers when storage is broken."""
-        return jsonify(status="ok", database_path=str(config.database_path))
+        answers when storage is broken. Public, so it reveals nothing about the
+        host: the database location is in the startup log instead."""
+        return jsonify(status="ok")
 
     @app.get("/api/meta/schema")
     @require_admin
