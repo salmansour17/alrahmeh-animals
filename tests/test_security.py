@@ -32,8 +32,10 @@ def test_correct_password_is_accepted(client):
 def test_missing_credentials_are_rejected(client):
     response = client.get("/api/meta/schema")
     assert response.status_code == 401
-    # The challenge header is what makes a browser offer a login prompt.
-    assert response.headers["WWW-Authenticate"].startswith("Basic ")
+    # No challenge header: it would make a browser prompt for the password and
+    # then resend it automatically, which is the cross-site request forgery
+    # opening the in-memory staff portal is designed to avoid.
+    assert "WWW-Authenticate" not in response.headers
 
 
 def test_wrong_password_is_rejected(client):

@@ -22,10 +22,6 @@ from flask import current_app, jsonify, request
 
 logger = logging.getLogger(__name__)
 
-# Sent on a 401 so a browser hitting the endpoint directly offers a login box
-# rather than showing a bare error.
-_CHALLENGE = {"WWW-Authenticate": 'Basic realm="Al-Rahmeh staff"'}
-
 
 def require_admin(view: Callable) -> Callable:
     """Reject the request unless it carries the configured admin password.
@@ -62,7 +58,13 @@ def require_admin(view: Callable) -> Callable:
         supplied = credentials.password if credentials else None
         if not supplied or not _matches(supplied, expected):
             logger.warning("Refused %s %s: bad admin password", request.method, request.path)
-            return jsonify(error="unauthorised"), 401, _CHALLENGE
+            # Deliberately no WWW-Authenticate header. That header makes a
+            # browser show its own login box and then remember the password
+            # and attach it to every later request to this site by itself,
+            # including requests another website triggers: a cross-site
+            # request forgery opening. The staff portal adds the password
+            # itself, from page memory, so it never needs the browser's help.
+            return jsonify(error="unauthorised"), 401
 
         return view(*args, **kwargs)
 
