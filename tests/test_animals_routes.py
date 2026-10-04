@@ -78,6 +78,9 @@ def test_public_view_hides_notes_and_non_vaccination_records(client):
         ("get", "/api/animals/999", None, 404, "not_found"),
         ("post", "/api/animals/{id}/transitions", {"to": "adopted"}, 409, "illegal_transition"),
         ("get", "/api/no-such-thing", None, 404, "not_found"),
+        # Beyond SQLite's largest integer: a 404, not an overflow inside sqlite3.
+        ("get", "/api/animals/99999999999999999999999", None, 404, "not_found"),
+        ("post", "/api/animals/99999999999999999999999/requests", {"kind": "adoption"}, 404, "not_found"),
     ],
 )
 def test_errors_map_to_status_codes_with_json_bodies(client, method, path, body, status, error):
