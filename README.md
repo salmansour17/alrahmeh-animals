@@ -77,6 +77,53 @@ default. No `.env` file is required.
 
 The SQLite database lives at **`${DATA_DIR}/alrahmeh.db`**.
 
+## Card donations (Stripe test mode)
+
+**Without keys, card donations are switched off on purpose.** A plain
+`python app.py`, which is what the deployment script runs, sets no Stripe keys,
+so the two payment endpoints answer 503 and the donate page offers CliQ and bank
+transfer instead. Everything else works. A site must never take payments with
+keys it was not given; see ADR-5.
+
+The card flow itself is tested without keys or network: `pytest` signs
+Stripe-format webhooks locally with a dummy secret and runs the real Stripe
+adapter against them. It was also verified by hand against Stripe's sandbox: a
+USD 35.97 test payment recorded once as 25.503 JOD, a resent webhook answered
+200 with no second row, and a forged signature was refused with 400.
+
+**To try it yourself** (about ten minutes, with a free Stripe account in test mode):
+
+1. Create an account at `dashboard.stripe.com/register`, switch to **test mode**
+   (or a sandbox), and copy the secret key from **Developers → API keys**. It
+   starts `sk_test_`. A live `sk_live_` key is refused.
+2. Install the [Stripe CLI](https://github.com/stripe/stripe-cli/releases) and,
+   in one window, forward Stripe's confirmations to the app:
+
+   ```powershell
+   $env:STRIPE_SECRET_KEY = Read-Host "Paste sk_test key"
+   stripe listen --events checkout.session.completed --forward-to localhost:8000/api/donations/stripe/webhook --api-key $env:STRIPE_SECRET_KEY
+   ```
+
+   It prints a signing secret starting `whsec_`.
+3. In a second window, start the app with both values:
+
+   ```powershell
+   $env:STRIPE_SECRET_KEY     = Read-Host "Paste sk_test key"
+   $env:STRIPE_WEBHOOK_SECRET = Read-Host "Paste the whsec secret"
+   python app.py
+   ```
+
+4. Open `http://localhost:8000/donate`, choose an amount and continue. Stripe's
+   sandbox checkout opens; pay with card `4242 4242 4242 4242`, any future
+   expiry date and any CVC. You return to the thank-you page, the CLI shows the
+   confirmation with a 200, and the homepage total rises.
+
+Card payments are charged in US dollars at the Central Bank of Jordan's fixed
+rate, because a Stripe test account cannot charge Jordanian dinars; the ledger
+records the dinar amount (ADR-5). On a real deployment the two keys go into the
+host's environment and the webhook address is registered once in the Stripe
+dashboard instead of using `stripe listen`.
+
 ## Staff access
 
 Admitting an animal, moving it through the placement lifecycle and recording a
@@ -162,7 +209,7 @@ Coverage is measured against `domains/` and excludes Flask blueprints
 (`routes.py`), which are routing glue rather than business logic. The
 configuration lives in `.coveragerc`.
 
-Current coverage (provisional, measured 2026-10-03; final figure on 2026-10-04):
+Final coverage, measured 2026-10-04:
 
 ```
 Name                              Stmts   Miss  Cover
@@ -183,6 +230,22 @@ TOTAL                              1077      0   100%
 
 398 passed
 ```
+
+### Clean-clone check (2026-10-04)
+
+A fresh `git clone` from GitHub into an empty folder, a new virtual
+environment, `pip install -r requirements.txt` and `python app.py`, with no
+configuration except `PORT=8765`, so it could not clash with a copy on 8000:
+
+- Ready in 1.8 s, listening on `0.0.0.0`. The schema created itself and
+  `data/alrahmeh.db` appeared; there was no prompt and no manual step.
+- No Node, no `node_modules` and no `.env` file: the committed `static/dist`
+  served the homepage, `/animals`, `/donate` and `/staff` (all 200).
+- `GET /api/donations/impact` answered 200 with zeroed totals, computed from
+  the empty ledger.
+- `POST /api/donations/checkout` answered 503 and the log said why: without
+  Stripe keys, card donations stay off and the rest of the site works.
+- `pytest --cov=domains` in the clone: 398 passed, 100%.
 
 100% line coverage says every line ran, not that every case is covered; ADR-4
 records what the tests deliberately leave thin.
@@ -230,7 +293,7 @@ is banned in this codebase.
 
 - [`ADR.md`](ADR.md) — architecture decision record
 - [`AI_USAGE.md`](AI_USAGE.md) — log of AI assistance
-- [`docs/report.md`](docs/report.md) — SDLC discussion, architecture and schema diagrams
+- [`docs/report.pdf`](docs/report.pdf) — the report: SDLC discussion, architecture and schema diagrams
 
 ## Contact
 
