@@ -91,6 +91,16 @@ def test_errors_map_to_status_codes_with_json_bodies(client, method, path, body,
     assert response.get_json()["error"] == error
 
 
+def test_sample_animals_are_added_once_to_an_empty_database(config):
+    with_samples = replace(config, sample_animals=True)
+    animals = create_app(with_samples).test_client().get("/api/animals").get_json()["animals"]
+    # A restart finds animals already there and adds nothing.
+    again = create_app(with_samples).test_client().get("/api/animals").get_json()["animals"]
+
+    assert len(animals) == len(again) == 6
+    assert {a["status"] for a in animals} == {"available", "fostering", "adopted"}
+
+
 def test_legal_transition_returns_the_updated_animal(client):
     animal_id = _admit(client)
     response = client.post(
