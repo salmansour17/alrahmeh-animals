@@ -195,7 +195,7 @@ frontend/src/     main.jsx App.jsx api.js pages/ components/ styles.css
 static/dist/      committed build output
 tests/            conftest.py, a service and a routes test file per domain,
                   test_payments.py, test_security.py, test_domain_boundary.py
-docs/             report.md architecture.md schema.md
+docs/             report.pdf (the final report, with the architecture and schema diagrams inside)
 ```
 
 Within each domain: `models.py` holds entities and enums, `repository.py` is the
