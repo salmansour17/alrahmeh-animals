@@ -25,6 +25,8 @@ the same number below the table.
 | 2026-09-29 / `feat/animal-intake-adoption` (step 2 of 3) | Claude Code (Opus 5.5) | "STEP 2: feat/animal-intake-adoption … Before coding, show me this proposed transition table and let me confirm it … parametrize over ALL 16 (from, to) pairs, so every allowed transition succeeds and every rejected one raises … ADR-2 in ADR.md: how the domains stay independently modularizable." Full prompt: [the prompt for 2026-09-29](#prompt-for-2026-09-29-verbatim). | Modified | I confirmed the transition table as proposed. I chose to add a `status_changes` table (history written in the same transaction as the race-safe UPDATE), public GETs showing vaccinations only, and placement requests deferred to the frontend days. I rejected two of its first drafts on review against my own rules: f-strings building SELECT column lists in `repository.py` (constants, but my rule is no f-strings in SQL at all), and an `import sqlite3` in the repository that broke `db/connection.py`'s claim to be the only importer. Result: 76 tests, 100% coverage on `domains/animals`; boundary test shown failing on a planted import. | [Explanation 7](#explanation-7-the-animal-intake-and-adoption-domain) |
 | 2026-09-30 / `feat/donation-impact-ledger` | Claude Code (Opus 5.5) | "This is the second feature domain and the data behind the homepage counters (audit fix #1: numbers computed from real data at request time, never hardcoded). … BEFORE WRITING ANY CODE: confirm these decisions with me … Checking earmarked animals: donations declares a one-method AnimalDirectory Protocol (exists(animal_id) -> bool). create_app adapts AnimalService to it with a small adapter at the composition root, inside neither domain package." Full prompt: [the prompt for 2026-09-30](#prompt-for-2026-09-30-verbatim). | Modified | Before coding it found that my amount regex `^\d{1,5}(\.\d{1,3})?$` accepts Arabic-Indic digits (`٢٥` parses as 25) and a trailing newline; I accepted the fix (`[0-9]` with `fullmatch`) and it proved the test catches the `\d` version. It also found the schema already has `received_at` (no schema change needed) but no `note` column (dropped), and that `earmarked_animal_id` has no foreign key by design (ADR-3). I chose all its recommendations: append-only triggers in SQLite, `/api/animals/stats` today, and "today" meaning Amman (fixed UTC+3), now injected into both services. Result: 160 tests, 100% coverage on both domains, the boundary test green in both directions, ADR-4 written. | The donations domain declares a one-method Protocol, `AnimalDirectory.exists(animal_id) -> bool`, and depends only on that. In `create_app`, `AnimalDirectoryAdapter` wraps `AnimalService`: `exists` calls `AnimalService.get` and returns False when a "not found" error is raised. That is the Adapter pattern, and the only place that knows both domains; in tests a small fake with a fixed set of IDs replaces it. Money is stored as integer fils because floats can't represent most decimal amounts exactly (0.1 + 0.2 gives 0.30000000000000004) and the errors build up across the ledger's SUM. It arrives as the string `amount_jod` because a JSON number would already be a float before my code saw it; the text is checked against a strict pattern, converted with `Decimal` and multiplied by 1,000. Full explanation: [Explanation 8](#explanation-8-the-donation-and-impact-ledger). |
 | 2026-10-01 / `feat/stripe-donations`, `feat/react-frontend` | Claude Code (Opus 5.5) | "SECRETS RULE, which overrides everything else today: never ask me to paste a key, never print, echo, log or write any value of STRIPE_SECRET_KEY or STRIPE_WEBHOOK_SECRET. … If JOD is NOT accepted, STOP. We decide together, because a second currency would break the fils-only SUM in the ledger. … PATTERN HONESTY TABLE … I must only claim what's really there." Full prompt: [the prompt for 2026-10-01](#prompt-for-2026-10-01-verbatim). | Modified | The JOD test failed: my Stripe test account cannot charge JOD at all, which overturned decisions 3 and 9 (JOD currency, 10-fils step). On its recommendation I chose to charge USD at the Central Bank of Jordan's fixed peg (709 fils per dollar), converted inside the Stripe adapter, with what Stripe actually charged kept in a new `stripe_payments` table as the audit trail; the ledger stays in fils. My own CLI test showed Stripe's real minimum is EUR 0.50 (the account settles in EUR), so `MIN_CHECKOUT_FILS` stays at 0.500 JOD as a margin. Gaps A and B as it recommended: a gift for a vanished animal is recorded as given with a warning; a charge that can't be expressed in fils is logged for staff and not recorded. It reordered my commits because the adapter imports the service's types (the consumer owns the interface), moved the fake gateway into the tests, also hid `admin_password` from `Config`'s repr, and switched off Stripe Adaptive Pricing after seeing it enabled in the live event. Live run: real test payment recorded once as 25.503 JOD for USD 35.97; a real resend of the same event answered 200 and added no row; forged signature 400; no keys and a dummy live key both 503 with no key material in the logs. 232 tests, 100% coverage. ADR-5 written; one sentence of ADR-4 corrected. Frontend (branch pushed, merges Oct 2): Vite + React at the repo root building into static/dist, Flask serving it with a fallback so React Router URLs reload while unknown /api paths stay JSON 404s. I rejected its first plain styling and asked for a warm, friendly design with animal photos; it built the restyle but flagged that no photos exist in the system, and I chose a staff photo-upload endpoint for Oct 2 (drawn species portraits until then) and a self-hosted Nunito font instead of Google Fonts (which would send visitors' IPs to Google). | `POST /api/donations/checkout` validates the request and asks `StripeGateway` for a payment page; nothing is written until Stripe sends a signed `checkout.session.completed` event to `/api/donations/stripe/webhook`. The signature is an HMAC-SHA256 of the timestamp and the exact body bytes under the shared `whsec_` secret, which is why the raw bytes are read before any JSON parsing. A replay can't count twice: `session_id` is UNIQUE, the payment insert uses `ON CONFLICT DO NOTHING`, and `_AlreadyRecorded` rolls back the donation row in the same transaction. The ledger records the verified `amount_total` because that is money that really moved; 25.500 JOD became $35.97 and came back as 25.503 JOD at the 709-fils peg. `StripeGateway` is the Adapter and the `PaymentGateway` Protocol lives in `service.py` (Dependency Inversion). Full explanation: [Explanation 9](#explanation-9-stripe-card-donations-and-the-start-of-the-react-frontend). |
+| 2026-10-02 / `feat/placement-requests`, `feat/animal-photos`, `feat/react-frontend` | Claude Code (Opus 5.5) | "PART 1: feat/placement-requests (audit fix #3, a MUST) … Approving ADOPTION: available | fostering → pending, using the existing check_transition. Never bypass it. … Gaps I want you to raise with me, not decide silently … PRIORITY if time runs short … Part 2, photo upload: CUT FIRST." Full prompt: [the prompt for 2026-10-02](#prompt-for-2026-10-02-verbatim). | Pending (decisions being confirmed) | No code yet. Checked the eight decisions and gaps C–F against CLAUDE.md, the ADRs and the schema; `placement_requests` already matches, so no schema change for Part 1. | Submitting a request never changes the animal's status by itself. Only a staff decision can do that. Every change one decision causes is made in a single function, `decide()` in `domains/animals/repository.py`. Everything runs inside `unit_of_work()`. If either guarded UPDATE matches no row, a `_Conflict` error is raised and every change is rolled back. Full explanation: [Explanation 10](#explanation-10-adoption-and-foster-requests-and-photos). |
+| 2026-10-03 / `feat/react-frontend` | Claude Code (Opus 5.5) | "no we need more things in the actual website. i all the information the origional website to actually be here this version of the website needs to be better not less than the origional … the staff portal needs a way to add it and also access the forms of the people that applied to volunteer and stuff." (2 October, evening; today's session continues that plan) | Pending (being built) | Reviewed the original alrahmehforanimals.org (all pages except News) and listed what the rebuild lacked: About/story, volunteering, contact, the gift shop and where donations go. I chose a stored contact and volunteer form (a third domain), staff-entered offline adoptions instead of a typed-in historical number, and a staff portal, reversing my earlier no-staff-pages decision. | Every request from the portal carries the password in an `Authorization: Basic` header. The server's `require_admin` compares it against `ADMIN_PASSWORD` on every request, so there is no separate "logged in" state to steal or forge. Full explanation: [Explanation 11](#explanation-11-the-old-sites-content-enquiries-and-the-staff-portal). |
 
 ---
 
@@ -998,6 +1000,240 @@ Staff will upload photos through a staff-only photo-upload endpoint, planned for
 2 October. Until then, each card shows a hand-drawn portrait of the animal's
 species from `art.jsx`, so the page never shows a broken image or an empty box.
 
+## Explanation 10: adoption and foster requests, and photos
+
+### The adoption and foster form (audit fix #3)
+
+The live site's "Adopt Now" and "Foster Now" buttons sent visitors to Google
+Forms that weren't connected to any animal record. In the rebuild, a member of
+the public asks to adopt or foster a specific animal through
+`POST /api/animals/<id>/requests`. The request is stored in the
+`placement_requests` table with the outcome `open`. Submitting a request never
+changes the animal's status by itself. Only a staff decision can do that. This
+is why the endpoint can safely be public: the worst a visitor can do is create a
+request for staff to review.
+
+### Staff decisions
+
+Staff approve or decline each request. Every change one decision causes is made
+in a single function, `decide()` in `domains/animals/repository.py`:
+
+- **The request's outcome changes.** `UPDATE placement_requests ... WHERE id = ?
+  AND outcome = ?` changes the request only if it is still in the expected
+  state, normally `open`.
+- **The animal moves.** `_move_animal()` runs `UPDATE animals ... WHERE id = ?
+  AND status = ?`, which moves the animal only if it is still in the expected
+  status. It also records the move as a new row in `status_changes`.
+- **Related requests close.** Other open requests for the same animal are
+  declined, where the rules call for it.
+- **All or nothing.** Everything runs inside `unit_of_work()`. If either guarded
+  UPDATE matches no row, a `_Conflict` error is raised and every change is
+  rolled back.
+
+This reuses the safety technique from the animals domain. Each update states
+what it expects the current value to be, so a change made by someone else in the
+meantime is detected instead of silently overwritten.
+
+### The honeypot
+
+The request form contains a hidden field called `website`. People never see it,
+but automated spam bots usually fill in every field they find. `is_honeypot()`
+in `domains/animals/models.py` checks this field before any other validation. If
+it contains anything, nothing is stored, but the route still answers with the
+same generic "received" reply (`RECEIVED`, 201) that a genuine request gets,
+without a request ID.
+
+### Photos
+
+`prepare_photo()` in `domains/animals/photos.py` processes every upload with the
+Pillow image library:
+
+- It opens the file as an image, which rejects anything that isn't really one.
+- It applies the camera's rotation setting, so the picture stays the right way
+  up once the metadata is removed.
+- It saves a completely new WebP file with no metadata (`exif=b""`).
+
+It also limits the image's pixel dimensions to block "decompression bombs": small
+files built to unpack into enormous images that would exhaust the server's
+memory.
+
+### Answers to the review questions
+
+**1. What happens, table by table, when staff approve an adoption request? Why
+must it all be one transaction?**
+
+When staff approve an adoption request for an available animal, the following
+happens in order inside one `unit_of_work()`:
+
+1. `placement_requests`: the request's outcome changes from `open` to
+   `approved`, but only if it is still open.
+2. `animals`: the animal's status changes from `available` (or `fostering`) to
+   `pending`, but only if it is still in that status.
+3. `status_changes`: a new row records the move, so the animal's history shows
+   when it became pending.
+4. `placement_requests`, other requests: nothing changes. Any other open
+   adoption requests for the same animal stay open on purpose, as backups in
+   case the approved adoption falls through. The rule is set by
+   `APPROVAL_DECLINES_OPEN` in `domains/animals/service.py`. Other requests are
+   declined automatically in only two situations: when a foster request is
+   approved (the animal's other open foster requests are declined), and when the
+   animal finally reaches `adopted` (all its remaining open requests are
+   declined).
+5. The transaction commits, and all the changes become visible together.
+
+It must be one transaction because the request and the animal describe the same
+real-world event, so they can never be allowed to disagree.
+
+- If only the first half happened, the request would say "approved" while the
+  animal still showed as available. Another family could then be approved for
+  the same animal, and the rescue might promise one dog to two households.
+- If the second half happened without the first, the animal would be pending
+  with no approved request to explain why.
+- If two staff click at the same moment, for example each approving a different
+  family's request for the same dog, both start from an available animal. The
+  first `UPDATE animals ... WHERE status = 'available'` succeeds. The second
+  matches no row, because the dog is already pending. That raises `_Conflict`,
+  which undoes the second staff member's request approval as well, and they get
+  a conflict response instead of a false success. Without the transaction, the
+  second family's request would remain "approved" for an animal that went to
+  someone else.
+
+**2. Why does a filled-in honeypot get the same answer as a real request?**
+
+Because the person running a bot learns from the response. If a filled-in
+honeypot got an error, or even a slightly different success message, the
+spammer could see that the trap had been detected and adjust the bot to leave
+that field empty. Giving exactly the same "received" reply means the bot
+believes it succeeded and has no reason to change. The reply also contains no
+request ID, so a bot can't use IDs to tell real submissions from caught ones.
+The check runs before validation, so a bot doesn't even get validation messages
+to learn from. Real visitors never see the field, so they are never affected.
+
+**3. Why is every uploaded photo re-encoded instead of stored as sent?**
+
+There are two reasons.
+
+- **Hidden personal data.** A phone photo carries metadata inside the file,
+  called EXIF data. This often includes the GPS coordinates of where it was
+  taken, along with the date, time and phone model. A photo of an animal in a
+  foster family's garden could reveal that family's home address to anyone who
+  downloads it. Re-encoding builds a brand-new file containing only the pixels,
+  so all of that information is discarded.
+- **Malicious files.** A file can claim to be a picture while being something
+  else, or both at once. For example, a file can be a valid image and also
+  contain HTML or script that a browser might run. A file can also be crafted to
+  exploit bugs in image-viewing software, or to unpack into a huge image that
+  crashes the server. Re-encoding means we never store or serve what the
+  uploader sent. The file is opened as an image, the pixels are drawn into a
+  fresh, clean WebP, and anything that can't be decoded as a real image is
+  rejected. The size cap protects the server during decoding itself. Pillow
+  still has to read the original file, so the library is pinned and must be kept
+  up to date.
+
+A side benefit is that every stored photo has the same format and a sensible
+size, which keeps the site fast.
+
+## Explanation 11: the old site's content, enquiries and the staff portal
+
+### Content carried over
+
+The rescue's existing pages (About, Contact, Volunteering, the gift shop and
+"Where your gift goes") were brought over from alrahmehforanimals.org, so the new
+site doesn't lose anything the organisation already publishes.
+
+### The enquiries domain
+
+A third domain, `domains/enquiries/`, stores contact and volunteer messages sent
+through the site. Staff mark each message as handled. It follows the same
+structure and independence rules as the other two domains.
+
+### Offline adoptions
+
+Many adoptions happened before the new site existed, or are arranged in person.
+The `offline_adoptions` table in `db/schema.sql` records each batch: how many
+animals (`animal_count`), when (`adopted_on`), an optional `note`, and when it
+was entered (`recorded_at`). `homes_found()` in `domains/animals/service.py`
+adds the animals adopted through the site to the total of these entries. That
+sum is the "animals found homes" figure on the homepage, calculated fresh on
+every request.
+
+### The staff portal
+
+Staff now have a web page at `/staff` instead of using command-line requests:
+
+- **Where the password lives.** When a staff member logs in,
+  `staffApi(password)` in `frontend/src/api.js` keeps the password in an
+  ordinary JavaScript variable.
+- **How requests carry it.** The portal adds the password to every request in an
+  `Authorization: Basic ...` header.
+- **How the server checks it.** `require_admin` in `security.py` compares it with
+  `ADMIN_PASSWORD`, and answers 503 if that variable isn't set.
+- **Nothing is stored in the browser.** There are no cookies, no localStorage
+  and no server sessions. Closing or reloading the tab forgets the password.
+
+### Answers to the review questions
+
+**1. How does the staff portal prove the user is staff, where is the password
+kept, and why is there no cross-site request forgery risk?**
+
+**Proof.** Every request from the portal carries the password in an
+`Authorization: Basic` header. The server's `require_admin` compares it against
+`ADMIN_PASSWORD` on every request, so there is no separate "logged in" state to
+steal or forge.
+
+**Storage.** The password exists only in a JavaScript variable in the open
+page's memory. It isn't written to a cookie, localStorage or anywhere on disk,
+and it disappears when the tab is closed or reloaded.
+
+**Why there's no forgery risk.** A cross-site request forgery (CSRF) attack works
+like this: a malicious website makes the visitor's browser send a request to our
+site, and the browser automatically attaches whatever credentials it holds for
+our site, usually cookies. The request then succeeds with the victim's authority
+without them knowing. Our design gives the browser nothing to attach
+automatically:
+
+- there is no cookie;
+- the `Authorization` header is added by our own code, not by the browser;
+- another website can't read our page's variables, so it doesn't know the
+  password;
+- if another site tried to add an `Authorization` header to a request to our
+  server, the browser would first ask our server for permission (a "preflight"
+  check). Our server doesn't grant that permission to other sites, so the
+  request is blocked.
+
+Two conditions keep this true:
+
+- The server must never answer a 401 with a `WWW-Authenticate: Basic` header.
+  That header makes the browser show its own login box and then remember the
+  password and attach it automatically, which would reopen the CSRF risk.
+- Basic authentication only encodes the password; it doesn't encrypt it. So the
+  live site must use HTTPS. And because the password sits in page memory,
+  malicious scripts must never run on the page, which is why
+  `dangerouslySetInnerHTML` is banned in the frontend.
+
+**2. Why are offline adoptions stored as dated records rather than one number in
+the configuration?**
+
+A single number in the configuration would bring back the problem from audit
+fix #1. The old site's "300 pets" was a number someone typed in once, which
+nobody could check and which went stale as soon as another animal was adopted.
+Moving that number from the HTML into a configuration file would only change
+where the hardcoded number lives.
+
+Dated records solve this in several ways:
+
+- **Real data.** Each entry says how many animals were adopted, when, and with
+  what note, so the figure is built from evidence rather than an estimate.
+- **Always current.** The homepage total is added up from the records each time
+  the page is requested, the same principle as the donation statistics.
+- **Accountable.** Each entry has a date and a recorded time, so staff can see
+  where the number came from, and a wrong entry can be found and explained.
+- **No restart needed.** Staff add entries through the portal. Changing a
+  configuration value would mean editing the server's settings and restarting
+  the application.
+- **Room to grow.** Because each entry is dated, the site could later show
+  figures such as "adoptions this year" without any change to the data.
+
 ## Prompt for 2026-09-29 (verbatim)
 
 ```text
@@ -1616,4 +1852,297 @@ PART D: end of session
 
 PRIORITY if we run short on time: the Stripe branch and its tests first, then
 ADR-5, then the frontend commits.
+```
+
+## Prompt for 2026-10-02 (verbatim)
+
+```text
+Read CLAUDE.md, assignment_1.md, ADR.md, AI_USAGE.md, README.md, db/schema.sql,
+app.py, config.py, the whole domains/ folder and frontend/src/ before doing
+anything. Today is 2026-10-02.
+
+Git rules as always: do NOT run git commit, push or gh yourself. Write the files,
+show me what changed, and give me the exact commands with full commit messages
+(subject + body explaining WHY). Merge with --merge, never --squash. Secrets rule
+from yesterday still applies: never print, log or write any key or password
+value, only "set" / "not set" and the prefix.
+
+════════════════════════════════════════
+PART 0: start of session (no commits)
+════════════════════════════════════════
+- Give me the commands to check out main and pull. Confirm feat/stripe-donations
+  is merged, and that feat/react-frontend exists on the remote with its 4 commits.
+- Log this prompt word for word in AI_USAGE.md as an uncommitted change. It goes
+  into the separate docs/ai-usage-2026-10-02 commit in Part 4, never into a
+  feature commit.
+- Branch order, to avoid clashes in app.py:
+    a. feat/placement-requests  (from main, merged first)
+    b. feat/animal-photos       (from main AFTER a is merged)
+    c. feat/react-frontend      (existing branch; merge main into it after a and
+                                 b are merged, then do the final build)
+
+════════════════════════════════════════
+DECISIONS: confirm these against the repo before coding
+════════════════════════════════════════
+Tell me first if any of these conflicts with CLAUDE.md, assignment_1.md, an ADR
+or the existing schema. Don't silently pick one.
+1. A third public write endpoint. CLAUDE.md says there are exactly two exceptions
+   to @require_admin, both for Stripe. POST /api/animals/<id>/requests becomes a
+   named THIRD exception, added to CLAUDE.md in its own commit. It only creates
+   an open request and never changes an animal's status. Only a staff decision
+   does that.
+2. Declining a request: if the animal is pending and no other open adoption
+   request remains, it goes back to available automatically. Otherwise it stays
+   pending.
+3. Applicants' personal data (name, email, message): staff-only, never logged,
+   never in public JSON, never in error messages, with length limits. No
+   automatic emails (that would need SMTP, an outside dependency), so staff
+   reply by hand.
+4. Spam: no rate limiting (it would need Redis). One cheap measure: a hidden
+   honeypot field. If it's filled in, answer exactly as if the request succeeded
+   (same status and body shape) but store nothing, so bots learn nothing.
+5. Photos: add Pillow (dependency 11 of 12, pinned to the exact installed
+   version) and re-encode every upload as WebP. This strips ALL metadata,
+   including GPS coordinates that could reveal a foster family's home. It caps
+   the longest side at 1600 px and rejects corrupt files and decompression bombs.
+6. CliQ and bank details come from environment variables (CLIQ_ALIAS,
+   BANK_NAME, BANK_IBAN, BANK_ACCOUNT_NAME) through Config, served by a public
+   GET /api/donations/offline-methods. Unset means the section is hidden. For
+   the demo, use obvious placeholders like RAHMEH-DEMO, set in my shell, never
+   in source.
+7. Bilingual: the header and page title only. A full Arabic RTL version is
+   future work, named in the report.
+8. No staff pages before the deadline. A README section gives one
+   ready-to-paste command per staff task, and it's named as a known gap.
+
+Gaps I want you to raise with me, not decide silently:
+- C: an animal is already pending and staff approve a SECOND adoption request.
+  pending → pending is an illegal transition. Should the approval fail with 409,
+  or should approving be refused while another approved request exists?
+  Recommend one.
+- D: when an animal finally becomes adopted, what happens to its other open
+  requests (adoption AND foster)? I'd expect them to be declined automatically,
+  in the same transaction. Confirm or argue otherwise.
+- E: can people submit requests for a PENDING animal? Recommend one.
+- F: the photo version number in photo_url. Can it come from the file's
+  modification time (no schema change), or does it need a column (a schema
+  change in ADR-3's territory)? Prefer no schema change, and tell me the
+  trade-off.
+
+════════════════════════════════════════
+PART 1: feat/placement-requests (audit fix #3, a MUST), about 5 commits
+════════════════════════════════════════
+The placement_requests table already exists in schema.sql, so there should be
+no schema change. If the table doesn't match what's needed, STOP and tell me.
+1. docs: CLAUDE.md, adding the third public endpoint as a named exception
+   (decision 1).
+2. models.py: RequestKind (ADOPTION, FOSTER), RequestOutcome (OPEN, APPROVED,
+   DECLINED), the PlacementRequest dataclass, and
+   NewPlacementRequest.from_payload. It covers name, email and message length
+   limits, a BASIC email-shape check (no giant regex), unknown fields rejected,
+   and the honeypot field recognised. The enum values must match the schema's
+   CHECK constraints, with a test like the donations one.
+3. repository.py: add_request, list_requests (by animal_id, or open only), and
+   decide_request(id, expected=OPEN, outcome), which is race-safe through
+   UPDATE ... WHERE outcome = 'open' with the rowcount checked (the same trick
+   as status changes).
+4. service.py + tests:
+   - Submitting is refused for an adopted animal, and a foster request is
+     refused for an animal that's already fostering (plus gap E).
+   - Approving ADOPTION: available | fostering → pending, using the existing
+     check_transition. Never bypass it.
+   - Approving FOSTER: available → fostering.
+   - Declining changes only the request, plus decision 2.
+   - The request decision and the status change happen in ONE transaction:
+     either both land or neither does.
+   - Tests: every kind × status combination (parametrised, like the 16
+     transition pairs), the lost race on decide_request (two staff deciding at
+     once, only one wins), every validation rule, the honeypot, gaps C/D/E as
+     decided, and that a failed status change rolls back the decision.
+5. routes.py + wiring:
+   - public  POST /api/animals/<id>/requests (JSON only), commented as the third
+     exception;
+   - staff   GET  /api/requests?status=open;
+   - staff   POST /api/requests/<id>/decision.
+   Route tests prove the public can't read requests (401/503) and that public
+   animal JSON never contains applicant data.
+
+Keep this in the animals domain. It's about animals' placement, and it must not
+import donations.
+
+════════════════════════════════════════
+PART 2: feat/animal-photos, about 3 commits (CUT THIS FIRST if time runs short)
+════════════════════════════════════════
+- Staff PUT /api/animals/<id>/photo takes the raw image body (Content-Type
+  image/jpeg | image/png | image/webp), up to 2 MB. Raise the 64 KiB
+  MAX_CONTENT_LENGTH for THIS ROUTE ONLY (Flask 3.1 lets you set
+  request.max_content_length per request). Every other route keeps 64 KiB, and
+  a test proves it.
+- Public GET /api/animals/<id>/photo serves image/webp with
+  X-Content-Type-Options: nosniff and sensible cache headers.
+- Public animal JSON gains photo_url, null when there's no photo, with a version
+  value (gap F) so a replaced photo isn't served stale.
+- Storage: DATA_DIR/photos/<animal_id>.webp. The filename comes from the integer
+  id ONLY, never from the upload, so no path traversal or filename tricks are
+  possible. Write to a temp file in the same folder and then os.replace, so a
+  crash never leaves half a photo. The folder is created on boot (no manual
+  step).
+- Design: a PhotoStore Protocol owned by the animal service (save, load,
+  exists/version), with FileSystemPhotoStore behind it, injected in create_app.
+  Tests use a temporary folder (tmp_path). Image processing (Pillow) lives in
+  ONE place, and the service never imports Pillow directly.
+- Pillow safety: set Image.MAX_IMAGE_PIXELS explicitly, call verify() and then
+  reopen before processing, check the DECODED format matches the claimed
+  Content-Type, convert the mode, thumbnail to 1600 px, and save as WebP with no
+  exif.
+- Tests: an oversized body (413), the wrong Content-Type (415), a file that
+  claims to be JPEG but isn't (400), a decompression bomb (400), replacing a
+  photo (the version changes), that the public can't upload, a missing animal
+  (404), and PROOF that GPS is gone: upload a JPEG with GPS exif, then show the
+  stored WebP has no exif.
+
+════════════════════════════════════════
+PART 3: finish feat/react-frontend and merge it, about 5 commits
+════════════════════════════════════════
+First merge main into the branch (after Parts 1 and 2 are merged) so it has the
+new endpoints.
+1. feat: GET /api/donations/offline-methods (decision 6), with config fields,
+   tests and the README env table. Backend, but it exists for the donate page.
+2. Homepage / (audit fix #1, made visible):
+   - live counters: "N animals found homes" (the adopted count from
+     /api/animals/stats), "X JOD raised for their care" and "N animals helped by
+     earmarked gifts" (from /api/donations/impact);
+   - three featured animals;
+   - Meet the animals and Donate buttons.
+   Show the numbers exactly as the API formats them (amount_jod is a string), so
+   the frontend does no money arithmetic. While loading or on an error, show a
+   neutral state, NEVER a made-up number.
+3. Donate page /donate (audit fix #2), linked from every page:
+   - amount chips 5 / 10 / 25 / 50 JOD plus your own amount, sent as STRINGS
+     ("25.000"), never JS numbers. Client-side hints only; the server decides,
+     and its 400 message is shown.
+   - purpose cards (medical / food / general, one kind sentence each), an
+     optional name, and a hidden honeypot is NOT needed here (checkout already
+     has its own accepted risk).
+   - /donate?animal=1 pre-fills "for <animal name>", fetched from the API, so
+     the name is never taken from the URL and shown raw.
+   - the note: "Card payments are charged in US dollars at the Central Bank of
+     Jordan's fixed rate."
+   - on 503, a gentle message pointing to CliQ and bank transfer from
+     offline-methods, hidden if unset.
+4. The adopt / foster form on each profile posts to Part 1's endpoint, with the
+   honeypot field visually hidden and aria-hidden, tabindex -1 and
+   autocomplete off, so screen readers and keyboard users never reach it. Show a
+   clear confirmation and the server's validation messages. This is the visible
+   end of fix #3.
+   Thank-you page /donate/thanks: warm thanks plus "your gift appears in our
+   totals once the payment is confirmed". It NEVER reads the address bar.
+5. The bilingual header: use the Arabic name EXACTLY as written in CLAUDE.md
+   (جمعية الرحمة للرفق بالحيوان), copied from that file, never retyped, marked
+   lang="ar" dir="rtl" on its own element. Check that photo_url shows real
+   photos on cards and profiles, with the species drawing as the fallback.
+   Then: npm run build, commit static/dist, and the README frontend + staff
+   commands section (decision 8). Every staff curl reads the password from an
+   environment variable ($env:ADMIN_PASSWORD), never a literal.
+   Then the PR and the merge commands.
+
+════════════════════════════════════════
+SOLID: one line each saying where it shows up today
+════════════════════════════════════════
+- SRP: AnimalService must not become a god class. Tell me whether placement
+  requests belong in a separate small service (e.g. PlacementService in the
+  animals domain, sharing the repository and check_transition) or in
+  AnimalService, and why. Image processing is not the service's job.
+- OCP: adding a third request kind (e.g. "sponsor") should mean an enum value
+  plus a rule-table entry, not new if/elif chains. Use a mapping from
+  RequestKind to target status where it reads cleanly.
+- LSP: FileSystemPhotoStore and any test store behave the same (same return
+  types, same exceptions for "no photo").
+- ISP: PhotoStore has only what the service calls. Public serializers expose
+  only public fields.
+- DIP: the service owns PhotoStore and the repository Protocols. Pillow and the
+  filesystem are details injected in create_app.
+
+════════════════════════════════════════
+PATTERN HONESTY TABLE: include it again in your final summary
+════════════════════════════════════════
+For creational, structural and behavioral patterns, say what today's code
+actually has and whether I may claim it. My expectation: FileSystemPhotoStore
+is Dependency Inversion behind a Protocol, not GoF Adapter (nothing incompatible
+is being adapted), unless you can argue the Pillow wrapper is. The
+RequestKind → status mapping is a lookup table, not Strategy. The one-transaction
+decision is a unit of work, which isn't on my list. Don't add a pattern to fill
+a category. Only Adapter (StripeGateway, AnimalDirectoryAdapter), DIP and DI
+remain claimed unless you argue otherwise first.
+
+════════════════════════════════════════
+CODE SMELLS to avoid
+════════════════════════════════════════
+Backend: a god service; check_transition duplicated or bypassed; email or length
+validation copied across domains (accept small duplication over a cross-domain
+import, and tell me where it is); magic numbers (2 MB, 1600 px, field lengths:
+named constants); magic strings for outcomes and kinds; open() calls scattered
+outside the photo store; bare except.
+Frontend: fetch outside api.js; giant 400-line components (but don't explode the
+file count either; the total must stay within 15–50 files excluding lockfiles,
+node_modules, .venv and static/dist if it's excluded from the count, so
+check how CLAUDE.md counts it); prop drilling more than two levels; money
+arithmetic or float amounts in JS; copy-pasted form logic between the donate
+and request forms; hardcoded CliQ/bank details.
+
+════════════════════════════════════════
+SECURITY checklist: confirm each item in your summary
+════════════════════════════════════════
+- @require_admin on every new staff route. The public request POST is the ONLY
+  new exception and is documented in CLAUDE.md.
+- Applicant name, email and message never appear in logs, public JSON or error
+  bodies.
+- Parameterised SQL only.
+- decide_request is race-safe, and the decision + status change are atomic.
+- Photo upload: per-route size limit, decoded-type check, re-encoding (GPS
+  stripped), the MAX_IMAGE_PIXELS bomb guard, id-only filenames, atomic write,
+  nosniff on serve.
+- Offline payment details come only from env vars, and placeholders are clearly
+  fake.
+- Frontend: no dangerouslySetInnerHTML; nothing from the URL rendered without
+  going through the API; no secrets or VITE_ variables holding anything
+  private; the honeypot is invisible to assistive tech; the build in
+  static/dist contains no keys (grep it for sk_, whsec_ and the admin variable
+  name and show me the result).
+
+════════════════════════════════════════
+VERIFY: show the actual output
+════════════════════════════════════════
+- pytest --cov=domains --cov-report=term-missing, per file and total, after
+  each branch.
+- Part 1 live: submit a request (public, 201), the honeypot (same response, no
+  row), list as public (401), list as staff, approve adoption (the animal goes
+  to pending), decline the only request (back to available), and approve on a
+  decided request (409).
+- Part 2 live: upload as staff, GET the photo, photo_url appears in public JSON,
+  a 3 MB upload → 413, a fake JPEG → 400, and the exif/GPS proof.
+- Part 3: python app.py serving the BUILT site. Walk the homepage counters, the
+  donate flow to Stripe Checkout (test card 4242), /donate/thanks, the request
+  form on a profile, the 503 fallback (keys unset), and the Arabic header. Take
+  screenshots of the homepage, donate page and a profile.
+- The boundary tests (both directions + only payments.py imports stripe) are
+  green, and show the file count and dependency count (expect 11).
+
+════════════════════════════════════════
+PART 4: end of session
+════════════════════════════════════════
+- Ask me for my own-words explanation of today's work and add it to
+  AI_USAGE.md. Don't write it for me.
+- Then the commands for the separate docs/ai-usage-2026-10-02 commit containing
+  only AI_USAGE.md.
+- Show the commit count per day (target: about 12 on Oct 2, about 66 total, no
+  day above about 25%).
+
+PRIORITY if time runs short (the brief's order: domains and tests, then docs,
+then frontend):
+  1. Part 1, placement requests: MUST.
+  2. Part 3, the homepage counters, donate page, request form, build and merge:
+     MUST (this makes the three audit fixes visible).
+  3. Part 2, photo upload: CUT FIRST. The drawings already stand in, so name it
+     as next work in the report.
 ```
