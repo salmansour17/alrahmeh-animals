@@ -24,7 +24,7 @@ Three things I found broken in that audit, which this rebuild must visibly fix:
 Assignment 1 (the monolith: one Flask process, SQLite, React served by Flask) was
 submitted on 2026-10-04 and is what `main` holds at the start of Assignment 2.
 
-Assignment 2 splits that monolith into two services, ships them in containers,
+Assignment 2 splits that monolith into three services, ships them in containers,
 moves storage to SQL Server, and deploys to Azure through GitHub Actions and
 Terraform. **The governing specification is the Assignment 2 brief**
 (`C:\Users\ASUS\Downloads\Assignment_2.pdf`; section numbers below, like §1a,
@@ -38,31 +38,46 @@ old rules are in the Git history; do not follow them.
 
 ## Architecture — decided 2026-11-17
 
-**Exactly two service containers** (§1a), along the ADR-2 seam:
+**Three service containers, one per feature domain** (ADR-6). The brief's text
+assumes two domains; this project has three, so it has three services. This is
+settled — do not re-raise it or suggest merging enquiries into animals.
 
 | Service | Folder | Owns |
 |---|---|---|
-| `animals` | `services/animals/` | animals, medical records, placement requests, status changes, offline adoptions, photos, **enquiries**, **staff accounts** |
+| `animals` | `services/animals/` | animals, medical records, placement requests, status changes, offline adoptions, photos, **staff accounts** |
 | `donations` | `services/donations/` | the donation ledger, Stripe payments, impact statistics |
-
-Assignment 1 had three domain packages, but the brief allows exactly two service
-containers, so `enquiries` moves into the animals service: like adoption
-requests, it is the public writing to staff. This moves the seam slightly and is
-explained in ADR-6.
+| `enquiries` | `services/enquiries/` | contact and volunteer messages |
 
 - **Database per service.** Each service has its own SQL Server database and
-  its own login, with no access to the other database. No service reads the
-  other's tables; it asks over HTTP.
-- **HTTP between services**, located by environment variable (`ANIMALS_URL`,
-  `DONATIONS_URL`), never a hardcoded host or port. **Every outbound call has a
-  timeout** (`*_TIMEOUT_S`). Use the standard library (`urllib.request`) unless
-  that gets genuinely awkward. Ask before adding `requests`.
-- **The server-side cross-seam flow (§3):** the donations service's impact
-  endpoint calls the animals service for the "found homes" count. If animals is
-  down or slow, it serves the last good value it cached in memory, with a
-  "figures may be out of date" flag. If it has no cached value, it returns its
-  own figures and marks adoptions as unavailable — never a stack trace or a hung
-  request.
+  its own login, with no access to the others' databases. No service reads
+  another's tables; it asks over HTTP.
+- **HTTP between services**, located by environment variable (`ANIMALS_URL`),
+  never a hardcoded host or port. **Every outbound call has a timeout**
+  (`ANIMALS_TIMEOUT_S`). Use the standard library (`urllib.request`) unless that
+  gets genuinely awkward. Ask before adding `requests`.
+- **The server-side cross-seam flow (§3) is the earmark check.** When a
+  donation is earmarked for an animal, the donations service's `AnimalDirectory`
+  calls `GET /api/animals/<id>` on the animals service. If animals is down or
+  slow: **checkout** goes ahead with the earmark marked unverified and the
+  webhook re-checks it when the payment lands (a donor is never turned away);
+  **staff recording an offline donation** get a clear 503 asking them to retry.
+  Never a stack trace or a hung request.
+- **The second server-side flow is the name lookup.** When staff list
+  donations, the donations service collects the page's distinct earmarked
+  animal ids and fetches their names from the animals service in **one batch
+  call** (a list-by-ids endpoint on animals, also in its OpenAPI file). Names
+  are cached in memory for a few minutes. If animals is down, the list still
+  loads with "#12 (name unavailable)". The cache is for display only: the
+  earmark check always asks fresh.
+- **Calls go one way only: donations → animals.** The animals service never
+  calls another service. Anything animals' pages need from donations (such as
+  money raised for one animal) is fetched by the browser. Don't add a call that
+  breaks this.
+- **The homepage counters stay client-side**: the UI calls each service's own
+  stats endpoint and shows each counter independently, so one service being
+  down blanks only its own counter.
+- **Enquiries calls nobody, and nobody calls it** server-side. It only checks
+  staff tokens locally.
 - **Cross-seam references are plain IDs.** A foreign key across the seam
   becomes an integer column with no constraint. Integrity is enforced in code or
   deliberately not enforced, and ADR-7 says which.
@@ -76,8 +91,8 @@ explained in ADR-6.
   changing language). No ORM. Raw SQL ported to SQL Server's dialect (T-SQL)
   through **`pymssql`**.
 - **Storage: SQL Server.** Locally, one `mcr.microsoft.com/mssql/server:2022-latest`
-  container in compose holding one database per service; on Azure, one Azure SQL
-  serverless database per service on one logical server. Each service reads
+  container in compose holding one database per service (three); on Azure, one
+  Azure SQL serverless database per service on one logical server. Each service reads
   `DATABASE_URL`.
 - **Frontend: React + Vite in `ui/`**, built to static files and served by an
   Azure Storage static website. It is no longer served by Flask, and the build
@@ -103,10 +118,11 @@ The single shared `ADMIN_PASSWORD` is retired. Staff get their own accounts:
   `werkzeug.security` and logins issue a token signed with `itsdangerous`. Both
   libraries already come with Flask, so this adds no new dependencies. Tokens
   expire.
-- The **donations service checks a token itself** using the shared secret
-  `TOKEN_SIGNING_KEY`, with no HTTP call. Staff can still record donations while
-  the animals service is down. The cost is that a deactivated account keeps
-  working until its token expires; ADR-6 states this.
+- The **donations and enquiries services each check a token themselves** using
+  the shared secret `TOKEN_SIGNING_KEY`, with no HTTP call. Staff can still
+  record donations and read messages while the animals service is down. The cost
+  is that a deactivated account keeps working until its token expires; ADR-6
+  states this.
 - **The first admin comes from environment secrets** (`STAFF_BOOTSTRAP_EMAIL`,
   `STAFF_BOOTSTRAP_PASSWORD`), and only when the `staff` table is empty. **Never a
   default password.** If the signing key is unset, staff endpoints fail closed
@@ -190,13 +206,14 @@ holds:
 - One Dockerfile per service, in its folder. No `COPY . .` (copy named paths
   only), no secrets or `.env` in the image, pinned base image and dependencies,
   runs as a non-root user.
-- `docker-compose.yml` at the root: both services, one SQL Server, a one-off
+- `docker-compose.yml` at the root: all three services, one SQL Server, a one-off
   service running the idempotent `db/init.sql` (databases and logins), and
   `nginx:alpine` serving `ui/` with the folder mounted (no Dockerfile for it).
   `docker compose up --build` must work from a clean clone.
-- Exactly two service containers. **No** third container (gateway, frontend
-  server, proxy), no Redis, no message broker, no background workers, no
-  Kubernetes (§1c). Anything we'd want from that list goes in ADR-10.
+- Exactly three service containers, one per domain, and nothing else. **No**
+  gateway, frontend server or proxy container, no Redis, no message broker, no
+  background workers, no Kubernetes (§1c). Anything we'd want from that list
+  goes in ADR-10.
 
 **CI/CD (§5), GitHub Actions in `.github/workflows/`**
 - On every push and PR: install, lint, test each service, **fail below 70%
@@ -206,16 +223,17 @@ holds:
 - On push to `main` only, and only if CI passed on that commit: push images to
   GHCR tagged with the commit SHA, `terraform apply`, build the UI with a
   generated `config.js` holding the service URLs, upload it to `$web`, then poll
-  `/health` on both services and fail if either doesn't return 200 in time (allow
+  `/health` on every service and fail if any doesn't return 200 in time (allow
   for the database waking up).
 - **CI never touches Azure SQL.** Every connection wakes it up and is billed.
 
 **Azure (§7) — only these resources, all in `rg-<prefix>`**
-- 1 Container Apps environment (Consumption plan) with 2 Container Apps:
+- 1 Container Apps environment (Consumption plan) with 3 Container Apps:
   `min_replicas = 0`, `max_replicas = 1`, public HTTPS ingress, CORS restricted
   to the static website's origin.
-- 1 logical SQL server (`<prefix>-sql`) with 2 serverless databases
-  (`<prefix>-animals-db`, `<prefix>-donations-db`) on the free offer: General
+- 1 logical SQL server (`<prefix>-sql`) with 3 serverless databases
+  (`<prefix>-animals-db`, `<prefix>-donations-db`, `<prefix>-enquiries-db`),
+  one login each, on the free offer: General
   Purpose, Gen5, 0.5–1 vCore, locally redundant backups. Firewall: allow Azure
   services only, and my own IP only while I need it.
 - 1 storage account (`<prefix-without-hyphens>ui`) with static website hosting,
@@ -240,7 +258,7 @@ resource or block that I can point to:
 | Firewall | `azurerm_mssql_firewall_rule`, per-service SQL logins, HTTPS-only ingress, CORS policy |
 | Load balancing and scaling | Container Apps ingress, explicit HTTP scale rule, min 0 / max 1 replicas |
 | Health | startup and readiness probes on `/health` in each container app |
-| Caching | in-service last-good cache for the cross-seam call; `Cache-Control` headers set when uploading the UI |
+| Caching | the donations service's in-memory cache of animal names; `Cache-Control` headers set when uploading the UI (hashed assets cached for a year, `index.html` never cached) |
 | Secrets | Container Apps `secret` blocks fed from GitHub secrets, never plain env vars |
 
 **The bootstrap is separate and documented**, because the pipeline identity has
@@ -272,11 +290,15 @@ infra/
 services/
   animals/           Dockerfile requirements.txt openapi.yaml app.py config.py
                      migrate.py migrations/ db.py security.py
-                     animals/ enquiries/ staff/   (models repository service routes)
+                     animals/ staff/   (models repository service routes)
                      tests/
   donations/         Dockerfile requirements.txt openapi.yaml app.py config.py
                      migrate.py migrations/ db.py security.py
                      donations/   (models repository service routes payments)
+                     tests/
+  enquiries/         Dockerfile requirements.txt openapi.yaml app.py config.py
+                     migrate.py migrations/ db.py security.py
+                     enquiries/   (models repository service routes)
                      tests/
 ui/                  package.json + lock, vite.config.js, index.html, src/
 docs/                report.pdf
@@ -289,7 +311,7 @@ and `models.py`; `.coveragerc` omits `routes.py`.
 
 **Shared code between services is copied, not imported.** Small files such as
 `migrate.py`, `db.py` and the token check exist once per service. A shared
-package would tie the two services back together, which is the coupling the
+package would tie the services back together, which is the coupling the
 split removes. Keep these copies small, and say so in ADR-6.
 
 ## How I want you to work
@@ -345,8 +367,8 @@ five** new entries, 6–10, in the same Context / Decision / Alternatives
 considered / Consequences format, landing on **at least 3 different commit
 dates**:
 
-6. The split: where the seam is, what crosses it (the impact call, the staff
-   token), enquiries moving into animals, whether ADR-2 held.
+6. The split (written 2026-11-17): three services, what crosses the seams (the
+   earmark check, the batched name lookup, the staff token), whether ADR-2 held.
 7. Data and migrations: SQLite to one SQL Server database per service, integrity
    lost at the seam and how it's compensated, recovery plan for a bad migration.
 8. Serverless hosting on Azure: resources and cost model, scale-to-zero effects
@@ -369,7 +391,7 @@ TODO question must ask about a specific line in it.
 include it in a feature branch's `git add` commands. Never tell me to run
 `git add .` or `git add -A` — always name the files explicitly.
 
-**Tests** — at least 70% coverage per service on core logic, plus at least one
+**Tests** — at least 70% coverage per service (all three) on core logic, plus at least one
 integration test across the seam (ADR-9 says whether it runs against compose or
 a stub). Per service:
 
@@ -407,10 +429,10 @@ The graded commit is tagged `submission`, on `main`, and deployed.
 
 | Date | Branches | Lands |
 |---|---|---|
-| Nov 17 | `chore/a2-groundwork`, `feat/split-services` | this file, schema copy, ADR-6; code moved into `services/` and `ui/` with no behaviour change; Azure bootstrap started |
-| Nov 18 | `feat/sqlserver-migrations`, `feat/containers` | SQL Server port, migration runner, `001`, photos into the database; Dockerfiles, compose, `db/init.sql`; ADR-7 |
+| Nov 17 | `chore/a2-groundwork`, `feat/split-services` | this file, schema copy, ADR-6; code moved into the three `services/` folders and `ui/` with no behaviour change; Azure bootstrap started |
+| Nov 18 | `feat/sqlserver-migrations`, `feat/containers` | SQL Server port, migration runner, `001` per service, photos into the database; three Dockerfiles, compose, `db/init.sql`; ADR-7 |
 | Nov 19 | `feat/ci`, `feat/terraform-cd` | CI gates; Terraform; CD; **first deploy with `001` and seed data**; ADR-8 |
-| Nov 20 | `feat/cross-seam`, `feat/staff-accounts` | impact call with timeout, cache and degraded response; health, logs, integration test, OpenAPI, `system.yaml`; staff accounts shipped with **`002`**, which alters tables holding data (Azure evidence); ADR-9 |
+| Nov 20 | `feat/cross-seam`, `feat/staff-accounts` | earmark check and batched name lookup over HTTP with timeout, name cache and designed failure; health, logs, integration test, OpenAPI, `system.yaml`; staff accounts shipped with **`002`**, which alters tables holding data (Azure evidence); ADR-9 |
 | Nov 21 | `feat/ui-forms`, `feat/staff-portal` | contact and volunteer forms redone, staff account management, cold-start UI; ADR-10 |
 | Nov 22 | `docs/a2-report`, `chore/submission` | diagrams, report, README, clean-clone check, `submission` tag |
 
