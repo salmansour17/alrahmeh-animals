@@ -14,13 +14,13 @@ data/
 htmlcov/
 .pytest_cache/
 
-# Node toolchain (frontend build dependencies)
+# Node toolchain (website build dependencies)
 node_modules/
 npm-debug.log*
 
-# The built React bundle IS committed: the deployment contract requires the app
-# to run after clone + pip install + `python app.py`, with no Node step.
-!static/dist/
+# The built website. No longer committed: the pipeline builds ui/ and uploads
+# the result to the static website, so a committed copy could only go stale.
+ui/dist/
 
 # Local environment overrides
 .env

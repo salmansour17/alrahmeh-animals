@@ -1,0 +1,21 @@
+{
+  "name": "alrahmeh-ui",
+  "private": true,
+  "version": "1.0.0",
+  "description": "The Al-Rahmeh Association for Animals website. Built into ui/dist as static files that call the animals, donations and enquiries services over HTTP. Node is a build tool only.",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build"
+  },
+  "dependencies": {
+    "@fontsource/nunito": "5.3.0",
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
+    "react-router-dom": "7.18.4"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "6.1.1",
+    "vite": "8.3.2"
+  }
+}
