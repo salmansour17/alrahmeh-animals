@@ -19,190 +19,278 @@ Three things I found broken in that audit, which this rebuild must visibly fix:
 3. "Adopt Now" and "Foster Now" go to Google Forms with no backend. Replace them
    with a real workflow tied to actual animal records.
 
-The governing specification is `assignment_1.md` in this repo. When my
-instructions and that file disagree, tell me — don't silently pick one.
+## Where we are: Assignment 2
 
-## Stack — decided, do not relitigate
+Assignment 1 (the monolith: one Flask process, SQLite, React served by Flask) was
+submitted on 2026-10-04 and is what `main` holds at the start of Assignment 2.
 
-- **Backend: Python 3.11+ with Flask 3.1.** No ORM; use the standard library's
-  `sqlite3` directly. Reasoning is in ADR-1.
-- **Storage: SQLite**, one file at `${DATA_DIR}/alrahmeh.db`.
-- **Frontend: React, built with Vite**, compiled to `static/dist` and served by
-  the same Flask process.
-- **Tests: pytest + pytest-cov.**
+Assignment 2 splits that monolith into two services, ships them in containers,
+moves storage to SQL Server, and deploys to Azure through GitHub Actions and
+Terraform. **The governing specification is the Assignment 2 brief**
+(`C:\Users\ASUS\Downloads\Assignment_2.pdf`; section numbers below, like §1a,
+refer to it). `assignment_1.md` still governs anything Assignment 2 doesn't
+change. When my instructions and the brief disagree, tell me — don't silently
+pick one.
 
-Two dependency manifests, both at the repository root: `requirements.txt` and
-`package.json`. This is a deliberate, approved exception to the one-manifest
-rule in section 1a — the mitigation is that `static/dist` is committed, so Node
-is a build-time tool only and is never needed to run the app. Never create a
-manifest inside a subfolder.
+Many rules in the Assignment 1 version of this file are reversed on purpose (no
+Docker, single process, SQLite, root-only manifests, shared admin password). The
+old rules are in the Git history; do not follow them.
 
-**Auth: one shared admin password**, read from `ADMIN_PASSWORD` and checked by
-`require_admin` in `security.py`. No users table, no sessions, no password
-hashing — one shared secret is all this organisation needs, and it keeps ADR-1's
-"no user accounts" reasoning literally true. Unset means the staff endpoints fail
-closed with 503; never add a default password. Per-staff accounts are a
-deliberate omission argued in the README and the report (not an ADR).
+## Architecture — decided 2026-11-17
 
-Every write endpoint in any domain gets `@require_admin`, with exactly four
-exceptions. Two are in the Stripe payment flow: `POST /api/donations/checkout` is
-public because donors are not staff; it validates the amount against
-server-side bounds and writes nothing to the ledger. `POST
-/api/donations/stripe/webhook` is authenticated by verifying the
-`Stripe-Signature` header against `STRIPE_WEBHOOK_SECRET` over the raw request
-body, and answers 400 to anything that fails. The third (added 2026-10-02) is
-`POST /api/animals/<id>/requests`, the adoption and foster form that replaces
-the Google Forms: applicants are the public. It only creates an open request and
-never changes an animal's status; only a staff decision does that. The fourth
-(also 2026-10-02) is `POST /api/enquiries`, the contact and volunteer form that
-replaces the old site's contact form and volunteer Google Form; it only stores a
-message for staff. Both public forms take JSON only, carry a honeypot, and keep
-the sender's details staff-only and out of logs. No other write endpoint may be
-unauthenticated.
+**Exactly two service containers** (§1a), along the ADR-2 seam:
 
-**Staff portal** (decision reversed on 2026-10-02, it was "no staff pages"). The
-organisation's own work happens off the website too: adoptions arranged in
-person, donations in cash, by CliQ or by bank. A website that cannot record
-those cannot show true totals, so staff get a portal at `/staff` in the React
-app. It signs in with `ADMIN_PASSWORD`, held only in page memory (never in
-localStorage or a cookie) and sent as the Authorization header by `api.js`; with
-no cookie involved there is no cross-site request forgery to defend against.
-It covers: adoption and foster requests, contact and volunteer messages,
-recording offline donations and offline adoptions, and managing animals.
+| Service | Folder | Owns |
+|---|---|---|
+| `animals` | `services/animals/` | animals, medical records, placement requests, status changes, offline adoptions, photos, **enquiries**, **staff accounts** |
+| `donations` | `services/donations/` | the donation ledger, Stripe payments, impact statistics |
 
-## Payments (Stripe)
+Assignment 1 had three domain packages, but the brief allows exactly two service
+containers, so `enquiries` moves into the animals service: like adoption
+requests, it is the public writing to staff. This moves the seam slightly and is
+explained in ADR-6.
 
-Added 2026-09-29 at my professor's request, to demonstrate Adapter and
-Dependency Inversion on a real external integration. It reverses the earlier
-"Stripe is out of scope" decision. Built on its own branch,
-`feat/stripe-donations`, after the donations ledger exists — never before.
+- **Database per service.** Each service has its own SQL Server database and
+  its own login, with no access to the other database. No service reads the
+  other's tables; it asks over HTTP.
+- **HTTP between services**, located by environment variable (`ANIMALS_URL`,
+  `DONATIONS_URL`), never a hardcoded host or port. **Every outbound call has a
+  timeout** (`*_TIMEOUT_S`). Use the standard library (`urllib.request`) unless
+  that gets genuinely awkward. Ask before adding `requests`.
+- **The server-side cross-seam flow (§3):** the donations service's impact
+  endpoint calls the animals service for the "found homes" count. If animals is
+  down or slow, it serves the last good value it cached in memory, with a
+  "figures may be out of date" flag. If it has no cached value, it returns its
+  own figures and marks adoptions as unavailable — never a stack trace or a hung
+  request.
+- **Cross-seam references are plain IDs.** A foreign key across the seam
+  becomes an integer column with no constraint. Integrity is enforced in code or
+  deliberately not enforced, and ADR-7 says which.
+- **Photos live in the animals database** (`VARBINARY(MAX)`), not on disk.
+  A Container App's filesystem is wiped when it scales to zero, so anything
+  written to local disk is lost.
 
-- **Test mode only.** `STRIPE_SECRET_KEY` and `STRIPE_WEBHOOK_SECRET` come from
-  the environment. Unset means the payment endpoints fail closed with 503, the
-  same philosophy as `ADMIN_PASSWORD`; the rest of the site keeps working.
-- **A key starting `sk_live_` refuses to charge**: the payment endpoints answer
-  503 and log why. The app still boots — refusing to start would let a payment
-  misconfiguration take the animal pages and counters down with it, which is the
-  same unattended-deployment reasoning as the `PORT` fallback.
-- **Never commit keys, never log them**, never echo them in a response.
-- **Stripe Checkout (redirect)** only, so there is no frontend npm dependency.
-  `stripe` is the only new package.
-- **Shape:** Stripe lives inside `domains/donations/` behind a
-  `PaymentGateway` interface (Adapter pattern, Dependency Inversion). The
-  donations service depends on the interface; a Stripe adapter and a fake
-  adapter for tests both implement it, and `create_app` chooses which.
-- **The ledger stays append-only and server-authoritative.** A card donation row
-  is written ONLY by the verified `checkout.session.completed` webhook — never
-  from the browser redirect, never from a client-supplied amount. The amount
-  recorded is the one in the verified Stripe event. Replayed webhooks must not
-  double-count: idempotency comes from a UNIQUE Stripe session id.
-- **Open schema question for that branch:** where the session id lives. Adding a
-  column to `donations` would not reach an existing database, because
-  `CREATE TABLE IF NOT EXISTS` never alters a table, and a migration step is
-  forbidden. A separate table that creates itself on boot avoids that. Either
-  way it changes what ADR-3 describes — stop and ask before editing
-  `schema.sql`.
-- **Stripe is the test-mode reference adapter; a regional gateway (PayTabs,
-  HyperPay) is the production path** behind the same `PaymentGateway`. Stripe
-  does not onboard businesses based in Jordan, so the rescue cannot go live on
-  it. That regional adapter is deliberately not built (ADR-5): without sandbox
-  credentials it could not be run or tested. At handover, switching provider
-  means one new adapter class and one line in `create_app`.
+## Stack
+
+- **Backend: Python 3.11+ with Flask 3.1**, same as Assignment 1 (§1d forbids
+  changing language). No ORM. Raw SQL ported to SQL Server's dialect (T-SQL)
+  through **`pymssql`**.
+- **Storage: SQL Server.** Locally, one `mcr.microsoft.com/mssql/server:2022-latest`
+  container in compose holding one database per service; on Azure, one Azure SQL
+  serverless database per service on one logical server. Each service reads
+  `DATABASE_URL`.
+- **Frontend: React + Vite in `ui/`**, built to static files and served by an
+  Azure Storage static website. It is no longer served by Flask, and the build
+  output is no longer committed (CI builds it).
+- **Tests: pytest + pytest-cov**, against a real SQL Server (a GitHub Actions
+  service container in CI, the compose container locally). Lint: **ruff**.
+- **WSGI server: gunicorn** (proposed 2026-11-17, confirm). Flask's built-in
+  server is for development only. Migrations run **before** gunicorn starts, in
+  the container's start command, never inside a worker. That way several workers
+  can't race to apply the same migration.
+
+**Manifests:** one per service (`services/<name>/requirements.txt`) and one for
+the UI (`ui/package.json`). This replaces Assignment 1's root-manifest rule
+(§1a). Never put a manifest at the repository root. **Soft cap: about 12
+third-party packages per service** (§1b). Pin exact versions (`==`), because the
+Dockerfiles require pinned dependencies.
+
+## Staff auth — per-staff accounts (reversed 2026-11-17)
+
+The single shared `ADMIN_PASSWORD` is retired. Staff get their own accounts:
+
+- A `staff` table in the **animals** service. Passwords are hashed with
+  `werkzeug.security` and logins issue a token signed with `itsdangerous`. Both
+  libraries already come with Flask, so this adds no new dependencies. Tokens
+  expire.
+- The **donations service checks a token itself** using the shared secret
+  `TOKEN_SIGNING_KEY`, with no HTTP call. Staff can still record donations while
+  the animals service is down. The cost is that a deactivated account keeps
+  working until its token expires; ADR-6 states this.
+- **The first admin comes from environment secrets** (`STAFF_BOOTSTRAP_EMAIL`,
+  `STAFF_BOOTSTRAP_PASSWORD`), and only when the `staff` table is empty. **Never a
+  default password.** If the signing key is unset, staff endpoints fail closed
+  with 503.
+- In the UI the token is held **in page memory only** (never localStorage or a
+  cookie) and sent as the `Authorization` header by `api.js`. No cookie, so there
+  is no cross-site request forgery to defend against.
+
+**Every write endpoint requires a staff token, with exactly four exceptions:**
+
+1. `POST /api/donations/checkout`: public, because donors aren't staff. It
+   validates the amount against server-side bounds and writes nothing to the
+   ledger.
+2. `POST /api/donations/stripe/webhook`: authenticated by checking the
+   `Stripe-Signature` header against `STRIPE_WEBHOOK_SECRET` over the raw request
+   body. Anything that fails gets a 400.
+3. `POST /api/animals/<id>/requests`: the public adoption and foster form. It
+   only creates an open request and never changes an animal's status.
+4. `POST /api/enquiries`: the public contact and volunteer form. It only stores
+   a message.
+
+Both public forms take JSON only, carry a honeypot field, and keep the sender's
+details staff-only and out of logs. Staff login itself is public by nature and
+must not reveal whether an email exists.
+
+**Staff portal** at `/staff` in the UI covers adoption and foster requests,
+contact and volunteer messages, recording offline donations and adoptions,
+managing animals, and now managing staff accounts.
+
+## Payments (Stripe) — unchanged rules, new home
+
+Stripe now lives inside the donations service. Every Assignment 1 rule still
+holds:
+
+- **Test mode only.** If `STRIPE_SECRET_KEY` or `STRIPE_WEBHOOK_SECRET` is
+  unset, the payment endpoints fail closed with 503. A key starting `sk_live_`
+  refuses to charge (503, logged), but the service still boots.
+- **Never commit keys, never log them**, never echo them in a response. On Azure
+  they are Container Apps secrets.
+- Stripe Checkout (redirect) only. The success and cancel URLs point at the
+  static website's origin (configuration, not hardcoded).
+- Stripe sits behind the `PaymentGateway` interface (Adapter pattern, Dependency
+  Inversion). The Stripe and fake adapters both implement it, and `create_app`
+  chooses which.
+- **The ledger is append-only and server-authoritative.** Card rows are written
+  only by the verified `checkout.session.completed` webhook. A UNIQUE Stripe
+  session id makes replayed webhooks harmless.
+- Stripe is the test-mode reference adapter; PayTabs/HyperPay is the production
+  path (ADR-5, still current).
 
 ## Hard constraints — never violate these
 
-- Single process, single container. One `python app.py` starts everything.
-- Bind `0.0.0.0`. Never `localhost` or `127.0.0.1`.
-- Port from the `PORT` environment variable, default 8000.
-- SQLite path from `DATA_DIR`, default `./data`.
-- No interactive setup at startup: no `input()`, no wizard, no manual migration
-  step. Schema applies itself with `CREATE TABLE IF NOT EXISTS` on boot.
-- Fully configurable through environment variables. Never require a `.env` file
-  to exist, and never make me edit source to reconfigure anything.
-- Must start in a couple of seconds.
-- **Never create** a `Dockerfile`, `docker-compose.yml`, anything under
-  `.github/workflows/`, or any Terraform/Bicep/ARM file. These are explicitly
-  forbidden and would cost me marks.
-- No Redis, RabbitMQ, Celery, cron, or any external database, cache or queue.
-- Keep declared dependencies under 12 across both manifests. Currently 11
-  (flask, stripe, pillow, pytest, pytest-cov; react, react-dom,
-  react-router-dom, @fontsource/nunito, vite, @vitejs/plugin-react).
-- Keep the file count between 15 and 50, excluding lockfiles, `.venv` and
-  `node_modules`. The assignment calls this rough guidance; the final count may
-  land a couple over 50 once `static/dist` is committed, which I accepted on
-  2026-10-01, and on 2026-10-02 I accepted a projected final count of 53, then
-  about 63 once the enquiries domain, the staff portal and the pages carrying
-  over the old site's content were added. The report must say why. Don't split
-  every button into its own component file.
+**Runtime**
+- Bind `0.0.0.0`. Port from `PORT`, default 8000. A malformed `PORT` falls back
+  to the default instead of crashing.
+- Fully configurable through environment variables. Never require a `.env` file,
+  never make me edit source to reconfigure anything. Every variable a service
+  reads is listed in `system.yaml` with its default; secrets have no default.
+- No interactive setup: no `input()`, no wizard.
+- `GET /health` on every service: 200 `{"status":"ok","db":"ok","version":"<git sha>"}`
+  when it can read **and write** its own database, 503 otherwise. It reflects only
+  the service's own state, never the other service's.
+- One log line per request to stdout: method, path, status, duration. Never log
+  applicants' details, tokens, passwords or keys.
+- **Cold starts are normal.** The database may be paused, and resuming takes up
+  to a minute (error 40613 or a timeout). Connect with retries and backoff. The
+  UI shows a clear "starting up, try again" state instead of a blank page.
 
-## The feature domains
+**Database migrations (§4)**
+- Numbered SQL files in `services/<name>/migrations/` (`001_init.sql`, …),
+  applied in order on startup by our own small runner, recorded in a
+  `schema_migrations` table. A second boot applies nothing.
+- **Applied migrations are never edited.** Corrections go in a new file.
+- **Never drop or recreate a table that holds data**, never recreate the database
+  on deploy, never delete a volume to redeploy. Graders check the code for this.
+- At least one migration must change a table that already holds data. **This
+  must reach Azure only after the first deploy has data in it**, so the report
+  can show before and after (§4.6).
 
-Two required domains, plus a small third (`domains/enquiries/`, contact and
-volunteer messages) added on 2026-10-02. All persist through SQLite. All must be
-independently modularizable: no domain package imports another, and they
-reference each other by primary-key value only. That boundary is the seam a later assignment would cut to split them into
-separate services, and I have to be able to point at it.
+**Containers**
+- One Dockerfile per service, in its folder. No `COPY . .` (copy named paths
+  only), no secrets or `.env` in the image, pinned base image and dependencies,
+  runs as a non-root user.
+- `docker-compose.yml` at the root: both services, one SQL Server, a one-off
+  service running the idempotent `db/init.sql` (databases and logins), and
+  `nginx:alpine` serving `ui/` with the folder mounted (no Dockerfile for it).
+  `docker compose up --build` must work from a clean clone.
+- Exactly two service containers. **No** third container (gateway, frontend
+  server, proxy), no Redis, no message broker, no background workers, no
+  Kubernetes (§1c). Anything we'd want from that list goes in ADR-10.
 
-**1. Animal intake and adoption** (`domains/animals/`)
-Animal profiles: name, species, breed, intake date, medical and vaccination
-history. A placement lifecycle with guarded transitions:
-`available → fostering → pending → adopted`. Fostering is central to how this
-organisation actually operates, so it is a first-class state, not an
-afterthought.
+**CI/CD (§5), GitHub Actions in `.github/workflows/`**
+- On every push and PR: install, lint, test each service, **fail below 70%
+  coverage per service**, validate `system.yaml` against `system.schema.json` and
+  each `openapi.yaml`, build every image, `terraform fmt -check` and
+  `terraform validate`.
+- On push to `main` only, and only if CI passed on that commit: push images to
+  GHCR tagged with the commit SHA, `terraform apply`, build the UI with a
+  generated `config.js` holding the service URLs, upload it to `$web`, then poll
+  `/health` on both services and fail if either doesn't return 200 in time (allow
+  for the database waking up).
+- **CI never touches Azure SQL.** Every connection wakes it up and is billed.
 
-Adoption and foster **requests** (`placement_requests`) are how the public asks,
-and a staff decision on one is what moves an animal. Approving an adoption moves
-it to `pending`, approving a foster request to `fostering`, always through
-`check_transition`. At most one adoption is approved at a time. Declining an
-open request changes only that request; declining the approved adoption (it
-fell through) returns the animal to `available`, and backup requests stay open.
-Reaching `adopted` declines every remaining open request. Each decision and the
-status change it causes land in one transaction. Applicants' names, emails and
-messages are staff-only and never logged.
+**Azure (§7) — only these resources, all in `rg-<prefix>`**
+- 1 Container Apps environment (Consumption plan) with 2 Container Apps:
+  `min_replicas = 0`, `max_replicas = 1`, public HTTPS ingress, CORS restricted
+  to the static website's origin.
+- 1 logical SQL server (`<prefix>-sql`) with 2 serverless databases
+  (`<prefix>-animals-db`, `<prefix>-donations-db`) on the free offer: General
+  Purpose, Gen5, 0.5–1 vCore, locally redundant backups. Firewall: allow Azure
+  services only, and my own IP only while I need it.
+- 1 storage account (`<prefix-without-hyphens>ui`) with static website hosting,
+  where the 404 page is `index.html` so React Router's links work. A
+  `tfstate` container in the same account holds Terraform's state.
+- The user-assigned managed identity `<prefix>-github`, trusted through OIDC
+  only for `main`, with Contributor on the resource group only.
+- **Do not create any other Azure resource**, and nothing with a fixed monthly
+  cost (no Front Door, Application Gateway, Azure Container Registry, Redis, App
+  Service plan, VM). If you think we need one, stop and tell me; it has to be
+  justified in ADR-8 and confirmed with my professor first.
 
-**2. Donation and impact ledger** (`domains/donations/`)
-Append-only donation records against a purpose: medical fund, food fund, or
-general. Impact statistics derived from the ledger, which is what the homepage
-counters read from. Rows arrive two ways: staff record cash and bank-transfer
-donations through a `@require_admin` endpoint, and card donations are written
-by the verified Stripe webhook (see Payments).
+**Infrastructure as code — Terraform, concrete and explicit**
 
-**Offline adoptions** (animals domain). Adoptions arranged entirely in person,
-for animals never entered here or from before the site existed, are recorded by
-staff as dated, append-only entries with a count. The homepage's "found homes"
-figure is the adopted animals on record plus those entries: every part of it is
-a record someone entered, never a number typed into configuration.
+My professor wants each deployment concern built as its own visible piece, not
+handed to a one-command tool. **Never use** `az containerapp up`, `azd up`, or
+any portal "deployment center" wizard. Each concern is its own Terraform
+resource or block that I can point to:
 
-**3. Enquiries** (`domains/enquiries/`)
-Contact and volunteer messages from the public, kept for staff, who mark each
-one handled. Same four layers as the other domains.
+| Concern | Where it lives |
+|---|---|
+| Firewall | `azurerm_mssql_firewall_rule`, per-service SQL logins, HTTPS-only ingress, CORS policy |
+| Load balancing and scaling | Container Apps ingress, explicit HTTP scale rule, min 0 / max 1 replicas |
+| Health | startup and readiness probes on `/health` in each container app |
+| Caching | in-service last-good cache for the cross-seam call; `Cache-Control` headers set when uploading the UI |
+| Secrets | Container Apps `secret` blocks fed from GitHub secrets, never plain env vars |
 
-## Repository layout
+**The bootstrap is separate and documented**, because the pipeline identity has
+Contributor only and cannot create the resource group, itself, or role
+assignments. `infra/bootstrap/` holds the one-time commands (resource group,
+managed identity and its OIDC trust, the storage account and its `tfstate`
+container, the SQL logins in T-SQL, Reader access for my professor), and the
+README walks through them. After the bootstrap, nothing is changed by hand in
+the portal.
+
+**Secrets — a leak is a graded incident**
+- Never commit a secret: not in source, workflows, compose, Terraform variables
+  files or Git history. Local passwords for compose come from my shell
+  environment, not a committed file.
+- If one is ever pushed: tell me immediately. Within 24 hours it gets rotated,
+  the GitHub secret is updated, and the incident is recorded in the README. An
+  unreported leak caps the grade at 40/100.
+
+## Repository layout (target)
 
 ```
-requirements.txt  package.json + lock  vite.config.js
-README.md  ADR.md  AI_USAGE.md  pytest.ini  .coveragerc
-app.py            entry point: python app.py
-config.py         env-driven Config dataclass
-db/               schema.sql, connection.py
-domains/
-  animals/        models.py repository.py service.py routes.py
-  donations/      models.py repository.py service.py routes.py
-  enquiries/      models.py repository.py service.py routes.py
-                  payments.py  (StripeGateway adapter; the PaymentGateway Protocol
-                  lives in service.py, the fake gateway in the tests)
-frontend/src/     main.jsx App.jsx api.js pages/ components/ styles.css
-static/dist/      committed build output
-tests/            conftest.py, a service and a routes test file per domain,
-                  test_payments.py, test_security.py, test_domain_boundary.py
-docs/             report.pdf (the final report, with the architecture and schema diagrams inside)
+README.md  ADR.md  AI_USAGE.md  CLAUDE.md  assignment_1.md
+docker-compose.yml   system.yaml   system.schema.json
+.github/workflows/   ci.yml  cd.yml
+db/init.sql          idempotent: databases + one login per service (compose)
+infra/
+  bootstrap/         one-time setup commands, documented in the README
+  *.tf               environment, container apps, SQL server + databases, storage
+services/
+  animals/           Dockerfile requirements.txt openapi.yaml app.py config.py
+                     migrate.py migrations/ db.py security.py
+                     animals/ enquiries/ staff/   (models repository service routes)
+                     tests/
+  donations/         Dockerfile requirements.txt openapi.yaml app.py config.py
+                     migrate.py migrations/ db.py security.py
+                     donations/   (models repository service routes payments)
+                     tests/
+ui/                  package.json + lock, vite.config.js, index.html, src/
+docs/                report.pdf
 ```
 
-Within each domain: `models.py` holds entities and enums, `repository.py` is the
-only thing that touches SQL, `service.py` holds business rules, `routes.py` is a
-Flask blueprint returning JSON. Tests target `service.py` and `models.py`.
-`.coveragerc` omits `routes.py` because section 4 asks for coverage of business
-logic, not routing glue.
+Within each domain package: `models.py` holds entities and enums,
+`repository.py` is the only thing that touches SQL, `service.py` holds business
+rules, `routes.py` is a Flask blueprint returning JSON. Tests target `service.py`
+and `models.py`; `.coveragerc` omits `routes.py`.
+
+**Shared code between services is copied, not imported.** Small files such as
+`migrate.py`, `db.py` and the token check exist once per service. A shared
+package would tie the two services back together, which is the coupling the
+split removes. Keep these copies small, and say so in ADR-6.
 
 ## How I want you to work
 
@@ -212,18 +300,21 @@ stage, commit and push, with the commit message written out. Do not run
 explicitly ask in that message. I want to read every diff before it lands.
 
 **One branch per feature, merged by pull request.** Never commit to `main`
-directly. Branch names: `feat/`, `test/`, `docs/`, `chore/`. Merge with
-`--merge`, never `--squash` — squashing destroys the commit cadence I'm graded
-on. A domain branch may stay open across two days so that nothing reaches `main`
-untested.
+directly; CI must run on the PR before CD runs on `main`. Branch names: `feat/`,
+`test/`, `docs/`, `chore/`. Merge with `--merge`, never `--squash`, because
+squashing destroys the commit cadence I'm graded on.
 
 **Commit messages** describe what changed and why, with a body when the reason
 isn't obvious from the subject. "Initial commit", "WIP", "update" and "fix" are
 worthless to me.
 
-**Verify before you claim.** Actually run the app, actually run the tests,
-actually check the coverage number. Show me the output. Don't tell me something
-works because it looks like it should.
+**Verify before you claim.** Actually run `docker compose up`, actually run the
+tests, actually check the coverage number, actually curl `/health`. Show me the
+output. Don't tell me something works because it looks like it should.
+
+**Azure costs my credit.** Before any command that creates, changes or deletes
+an Azure resource, tell me what it does and wait for my yes. Never connect to
+the Azure SQL databases from tests.
 
 **Explain things plainly.** If you're presenting me a choice, tell me what each
 option means in concrete terms — what changes on disk, what it costs, what the
@@ -234,8 +325,8 @@ unless you define it.
 
 I'm assessed on SOLID and on design patterns (Singleton, Factory Method,
 Builder, Adapter, Proxy, Facade, Observer, Strategy, Command). Apply them only
-where they genuinely fit. A repository abstraction over SQLite is real
-dependency inversion; guarded status transitions may or may not want Strategy.
+where they genuinely fit. The repository layer is real dependency inversion; the
+cross-seam client behind an interface, with a stub in tests, is another.
 **Forced patterns read as worse code, not better** — and I have to justify every
 one of them from memory. If a plain function is clearer, write the plain
 function.
@@ -245,68 +336,85 @@ Small single-purpose classes, dependency injection at the composition root
 
 ## Process deliverables — keep current, never backfill
 
-These are 30% of the grade, more than the working features.
+Process evidence is 25% of the grade (§6).
 
-**`ADR.md`** — exactly 5 entries, no more. The format is fixed in
-`assignment_1.md` section 5: Context / Decision / Alternatives considered /
-Consequences. Entries must land across at least 3 different commit dates, as the
-decisions are actually made. The five are: (1) backend framework, (2) how the
-domains stay independently modularizable, (3) the SQLite schema decision, (4)
-testing approach and what I left thin, (5) what I chose not to build: the
-production Jordanian payment gateway — Stripe is built as a test-mode reference
-adapter, PayTabs/HyperPay is the production path behind the same interface.
+**`ADR.md`** — entries 1–5 stay as written. Where a decision changed, set that
+entry's status to `Superseded by [N]` and leave its text alone. Already known:
+ADR-1 (sqlite3) and ADR-3 (SQLite schema) are superseded by ADR-7. Add **exactly
+five** new entries, 6–10, in the same Context / Decision / Alternatives
+considered / Consequences format, landing on **at least 3 different commit
+dates**:
 
-**`AI_USAGE.md`** — add a row every session. Fill in the date, tool, my actual
-prompt, disposition, and what changed. **Leave the last column to me.** That
-column is "in my own words, how this works", and it is the one thing I cannot
-outsource — mark it `⚠️ TODO (me)` with a specific question I need to answer, and
-remind me it's outstanding. Never write it for me.
+6. The split: where the seam is, what crosses it (the impact call, the staff
+   token), enquiries moving into animals, whether ADR-2 held.
+7. Data and migrations: SQLite to one SQL Server database per service, integrity
+   lost at the seam and how it's compensated, recovery plan for a bad migration.
+8. Serverless hosting on Azure: resources and cost model, scale-to-zero effects
+   (cold starts, database resume, retries, migrations with a single replica),
+   what changes at 100x traffic.
+9. Pipeline and testing: what CI gates on and why, how the cross-seam test works,
+   what is deliberately not tested.
+10. One thing deliberately not built, and when it would be worth building.
 
-**`AI_USAGE.md` gets its own commit, at the end of each session.** The file is
-already tracked. Never include it in a feature branch's `git add` commands.
-When a session's work is merged, I write my own-words column for that session,
-and then you hand me a separate commit for `AI_USAGE.md` alone, on its own
-`docs/` branch merged by pull request like everything else. Never tell me to run
-`git add .` or `git add -A` — always name the files explicitly, so this file
-can't be swept in by accident.
+**`AI_USAGE.md`** — add a row every session: date, tool, my actual prompt,
+disposition, what changed. **Leave the last column to me.** It's "in my own
+words, how this works", and it's the one thing I can't outsource. Mark it
+`⚠️ TODO (me)` with a specific question I need to answer, and remind me it's
+outstanding. Never write it for me. **Infrastructure files count** (§6): every
+Dockerfile, compose file, workflow and `.tf` file you produce gets a row, and the
+TODO question must ask about a specific line in it.
 
-**Tests** — at least 70% coverage on the business logic of both domains,
-measured with:
+**`AI_USAGE.md` gets its own commit, at the end of each session**, on its own
+`docs/` branch merged by pull request, after I've written my column. Never
+include it in a feature branch's `git add` commands. Never tell me to run
+`git add .` or `git add -A` — always name the files explicitly.
+
+**Tests** — at least 70% coverage per service on core logic, plus at least one
+integration test across the seam (ADR-9 says whether it runs against compose or
+a stub). Per service:
 
 ```
-pytest --cov=domains --cov-report=term-missing
+pytest --cov --cov-report=term-missing
 ```
 
-Report the real number in the README.
+Report the real numbers in the README.
+
+**Evidence to capture as it happens, not afterwards** (the report needs all of
+it): the migration log line and the data before and after on Azure; a successful
+CD run on `main`; **one failed run and the commit that fixed it**; a screenshot
+of what a user sees with one service stopped. When one of these moments happens,
+tell me to save the link or screenshot.
 
 ## Why the process matters more than the code
 
-There is a closed-book written exam on this project: six short-answer questions,
-no notes, no device, graded against what's actually in the repo. It multiplies my
-subtotal rather than adding to it, so a weak showing there wipes out good work
-everywhere else.
+There is a closed-book written comprehension check: no notes, no device, graded
+against what's actually in the repo, and "any line" of the Dockerfiles, compose
+file, workflows and Terraform may be asked about. It multiplies my subtotal, so a
+weak showing there wipes out good work everywhere else.
 
-That changes what I need from you. Don't hand me code I can't account for. If
-something is subtle — why `create_app()` takes a `Config` instead of reading the
-environment itself, why a malformed `PORT` falls back instead of raising — say so
-at the time, so I learn it while it's being written rather than the night before.
+So don't hand me code I can't account for. When something is subtle — why
+migrations run before gunicorn, why the health check writes, why `max_replicas`
+is 1, why the pipeline identity can't assign roles, why the 404 page is
+`index.html` — say so at the time, so I learn it while it's being written rather
+than the night before.
 
 ## Schedule
 
-Deadline: **2026-10-04 23:59**. Requirement is 12+ commits across 6+ distinct
-calendar days, no single day over 40% of the total, pushed to
-`github.com/salmansour17/alrahmeh-animals`.
+Deadline: **2026-11-22 23:59 (assumed, confirm)**. Requirement: 12+ new commits
+across 6+ distinct calendar days, no single day over 40% of them, **pushed** each
+day (push timestamps are checked) to `github.com/salmansour17/alrahmeh-animals`.
+The graded commit is tagged `submission`, on `main`, and deployed.
 
-| Date | Branch | Lands |
+| Date | Branches | Lands |
 |---|---|---|
-| Sep 28 | `chore/project-scaffold`, `feat/sqlite-persistence` | scaffold, ADR-1, schema, connection layer, ADR-3 |
-| Sep 29 | `feat/admin-auth`, `chore/stripe-scope`, `feat/animal-intake-adoption` | shared admin password, Stripe scope change, entity, repository, guarded transitions, tests, ADR-2 |
-| Sep 30 | `feat/donation-impact-ledger` | ledger, impact stats, tests, coverage run, ADR-4 |
-| Oct 1 | `feat/stripe-donations`, then `feat/react-frontend` | PaymentGateway + Stripe and fake adapters, checkout and verified webhook, idempotency, tests, ADR-5; then Vite at root, api client, router, animal pages |
-| Oct 2 | `feat/react-frontend` | homepage counters, donate page (redirects to Stripe Checkout), bilingual header, committed build |
-| Oct 3 | `docs/report-and-final-adrs` | architecture and schema diagrams, 4-5 page report (per-staff accounts argued there as a second deliberate omission) |
-| Oct 4 | `chore/deployment-contract-check` | clean-clone verification, final README numbers |
+| Nov 17 | `chore/a2-groundwork`, `feat/split-services` | this file, schema copy, ADR-6; code moved into `services/` and `ui/` with no behaviour change; Azure bootstrap started |
+| Nov 18 | `feat/sqlserver-migrations`, `feat/containers` | SQL Server port, migration runner, `001`, photos into the database; Dockerfiles, compose, `db/init.sql`; ADR-7 |
+| Nov 19 | `feat/ci`, `feat/terraform-cd` | CI gates; Terraform; CD; **first deploy with `001` and seed data**; ADR-8 |
+| Nov 20 | `feat/cross-seam`, `feat/staff-accounts` | impact call with timeout, cache and degraded response; health, logs, integration test, OpenAPI, `system.yaml`; staff accounts shipped with **`002`**, which alters tables holding data (Azure evidence); ADR-9 |
+| Nov 21 | `feat/ui-forms`, `feat/staff-portal` | contact and volunteer forms redone, staff account management, cold-start UI; ADR-10 |
+| Nov 22 | `docs/a2-report`, `chore/submission` | diagrams, report, README, clean-clone check, `submission` tag |
 
-If I fall behind, protect in this order: working domains and their tests first,
-then the process documents, then Stripe, then the frontend. A thin frontend with
-honest ADRs beats a polished one without them.
+If I fall behind, protect in this order: the split working end to end, then
+migrations and CI/CD to Azure, then the process documents, then staff accounts,
+then UI polish. Staff accounts and the redesigned forms are not required by the
+brief, so they are the first things to cut.
