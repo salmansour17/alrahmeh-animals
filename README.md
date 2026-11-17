@@ -1,8 +1,8 @@
 # Al-Rahmeh Association for Animals
 
 A rebuild of the website of [Al-Rahmeh Association for Animals](https://www.alrahmehforanimals.org/)
-(جمعية الرحمة للرفق بالحيوان), a small animal rescue in Jordan, as a single-process
-web application.
+(جمعية الرحمة للرفق بالحيوان), a small animal rescue in Jordan: three small
+services, one per feature domain, and a static website that calls them.
 
 The live site presents adoption listings that are not backed by any record
 system, impact counters whose numbers are written into the HTML by hand, and
@@ -21,68 +21,86 @@ rescue's story, volunteering, contact details and the gift shop.
 | **Donation & impact ledger** | Donations recorded against a purpose (medical fund, food fund, general), and the impact statistics derived from them. |
 | **Enquiries** _(small third domain)_ | Contact and volunteer messages from the public, kept for staff. |
 
-The domains share a database file but no code: no domain package imports
-another, and they reference each other by primary key only. A test fails if
-that ever changes.
+Each domain is its own service, in `services/<name>/`, with its own database
+and its own dependency manifest (ADR-6). No service imports another's code, and
+a test in each service fails if that ever changes. They refer to each other by
+id only, and only one call crosses between them on the server: the donations
+service asks the animals service whether an earmarked animal exists.
 
-## Approved deviation: two dependency manifests
+## Layout
 
-Section 1a of the assignment permits a single dependency manifest at the repo
-root. This project has two: `requirements.txt` for the Python process and
-`package.json` for the React frontend. The instructor approved the use of React
-for the user interface on 2026-09-25.
+| Folder | What it is | Default dev port |
+|---|---|---|
+| `services/animals/` | Animal intake, the placement lifecycle, adoption and foster requests, offline adoptions, photos | 8001 |
+| `services/donations/` | The donation ledger, Stripe card payments, impact figures | 8002 |
+| `services/enquiries/` | Contact and volunteer messages | 8003 |
+| `ui/` | The website: React, built by Vite into static files | 5173 |
 
-Both manifests sit at the repository root; there are no per-folder manifests.
-The Node toolchain is a build-time dependency only: `static/dist` is committed,
-so a clone that installs `requirements.txt` and runs `python app.py` serves the
-full application with Node absent from the machine. The start command is
-always `python app.py`; `package.json` defines only the build scripts and is
-never needed to run the site.
+Each service has its own `requirements.txt`, and `ui/` has its own
+`package.json`; there is no manifest at the repository root.
 
 ## Requirements
 
 - Python 3.11 or newer
-- Node.js 20 or newer — **only** if you intend to modify the frontend. The
-  compiled bundle is committed, so running the app needs Python alone.
+- Node.js 20 or newer, to build or preview the website
 
-## Setup
+## Running locally
+
+Each service is a separate process. Install its dependencies and start it from
+its own folder, on its own port (every service defaults to 8000 on its own, so
+locally they need different ones):
 
 ```bash
 python -m venv .venv
 source .venv/bin/activate        # Windows: .venv\Scripts\activate
-pip install -r requirements.txt
-python app.py
+pip install -r services/animals/requirements.txt -r services/donations/requirements.txt -r services/enquiries/requirements.txt
+
+cd services/animals   && PORT=8001 python app.py      # terminal 1
+cd services/donations && PORT=8002 ANIMALS_URL=http://localhost:8001 python app.py   # terminal 2
+cd services/enquiries && PORT=8003 python app.py      # terminal 3
+cd ui && npm ci && npm run dev                        # terminal 4: http://localhost:5173
 ```
 
-The application serves on <http://0.0.0.0:8000> by default. No migration step,
-interactive prompt or manual warm-up is needed: the schema is applied on
-startup if it is not already present.
+(On Windows PowerShell, set a variable first, e.g. `$env:PORT=8001`, then run
+`python app.py`.)
+
+The website's dev server forwards each `/api/...` call to the service that owns
+it (`ui/vite.config.js`). Each service applies its schema on startup; there is
+no migration step or prompt.
+
+Running a single service works the same way: start just that one. The donations
+service keeps working with the animals service stopped; only a staff donation
+earmarked for an animal is refused, with a 503 asking to retry (ADR-6).
 
 ## Configuration
 
 Every setting is read from the environment at startup, and every one has a
-default. No `.env` file is required.
+default. No `.env` file is required. `PORT`, `DATA_DIR`, `FLASK_DEBUG` and
+`ADMIN_PASSWORD` are read by every service; the rest by the one named.
 
 | Variable | Default | Purpose |
 |---|---|---|
 | `PORT` | `8000` | TCP port to listen on. Values that are not valid port numbers are ignored with a warning. |
-| `DATA_DIR` | `./data` | Directory holding the SQLite file and the `photos/` folder of animal photos. Both are created on startup if absent. |
-| `SAMPLE_ANIMALS` | `1` | When the database has no animals, add six sample animals at startup (via the same service as a staff intake) so the animal pages have something to show. `0` starts empty. Never adds to a database that already has animals. |
+| `DATA_DIR` | `./data` | Directory holding the service's SQLite file (`animals.db`, `donations.db` or `enquiries.db`), and for animals the `photos/` folder. Created on startup if absent. |
+| `SAMPLE_ANIMALS` | `1` | _(animals)_ When the database has no animals, add six sample animals at startup (via the same service as a staff intake) so the animal pages have something to show. `0` starts empty. Never adds to a database that already has animals. |
 | `FLASK_DEBUG` | `0` | Set to `1` for the Flask reloader and tracebacks. Leave unset in deployment. |
 | `ADMIN_PASSWORD` | _(unset)_ | Shared password for the staff-only endpoints. **Unset disables them**, returning 503 rather than allowing access. |
-| `STRIPE_SECRET_KEY` | _(unset)_ | Stripe **test-mode** secret key (`sk_test_…`). Unset, or a live `sk_live_…` key, disables card donations (503); the rest of the site keeps working. |
+| `STRIPE_SECRET_KEY` | _(unset)_ | _(donations)_ Stripe **test-mode** secret key (`sk_test_…`). Unset, or a live `sk_live_…` key, disables card donations (503); the rest of the site keeps working. |
 | `STRIPE_WEBHOOK_SECRET` | _(unset)_ | Signing secret (`whsec_…`) used to verify that webhook calls really come from Stripe. Unset disables card donations. |
 | `CLIQ_ALIAS` | _(unset)_ | The rescue's CliQ alias, shown on the donate page as a way to give without a card. Unset hides it. |
 | `BANK_NAME`, `BANK_IBAN`, `BANK_ACCOUNT_NAME` | _(unset)_ | Bank-transfer details for the donate page. Shown only when at least the IBAN and account name are set. Staff record these donations afterwards, like cash. |
-| `PUBLIC_BASE_URL` | `http://localhost:8000` | The site's own origin, e.g. `https://donate.example.org`. Donors return here after paying. Must be a bare `http(s)://host[:port]`; anything else disables card donations. |
+| `ANIMALS_URL` | `http://animals:8000` | _(donations)_ Where the animals service answers. The default is its Docker Compose name; locally, `http://localhost:8001`. |
+| `ANIMALS_TIMEOUT_S` | `2` | _(donations)_ Seconds before a call to the animals service is given up. Values outside (0, 60] fall back to the default. |
+| `PUBLIC_BASE_URL` | `http://localhost:5173` | _(donations)_ The website's origin, e.g. `https://donate.example.org`. Donors return here after paying. Must be a bare `http(s)://host[:port]`; anything else disables card donations. |
 
-The SQLite database lives at **`${DATA_DIR}/alrahmeh.db`**.
+Each service's SQLite database lives at **`${DATA_DIR}/<service>.db`**. SQLite
+is temporary: the services move to SQL Server, one database each, next.
 
 ## Card donations (Stripe test mode)
 
 **Without keys, card donations are switched off on purpose.** A plain
-`python app.py`, which is what the deployment script runs, sets no Stripe keys,
-so the two payment endpoints answer 503 and the donate page offers CliQ and bank
+start of the donations service sets no Stripe keys, so the two payment
+endpoints answer 503 and the donate page offers CliQ and bank
 transfer instead. Everything else works. A site must never take payments with
 keys it was not given; see ADR-5.
 
@@ -102,19 +120,20 @@ USD 35.97 test payment recorded once as 25.503 JOD, a resent webhook answered
 
    ```powershell
    $env:STRIPE_SECRET_KEY = Read-Host "Paste sk_test key"
-   stripe listen --events checkout.session.completed --forward-to localhost:8000/api/donations/stripe/webhook --api-key $env:STRIPE_SECRET_KEY
+   stripe listen --events checkout.session.completed --forward-to localhost:8002/api/donations/stripe/webhook --api-key $env:STRIPE_SECRET_KEY
    ```
 
    It prints a signing secret starting `whsec_`.
-3. In a second window, start the app with both values:
+3. In a second window, start the donations service with both values (and the
+   other services and the website as in "Running locally"):
 
    ```powershell
    $env:STRIPE_SECRET_KEY     = Read-Host "Paste sk_test key"
    $env:STRIPE_WEBHOOK_SECRET = Read-Host "Paste the whsec secret"
-   python app.py
+   cd services/donations; $env:PORT = 8002; $env:ANIMALS_URL = "http://localhost:8001"; python app.py
    ```
 
-4. Open `http://localhost:8000/donate`, choose an amount and continue. Stripe's
+4. Open `http://localhost:5173/donate`, choose an amount and continue. Stripe's
    sandbox checkout opens; pay with card `4242 4242 4242 4242`, any future
    expiry date and any CVC. You return to the thank-you page, the CLI shows the
    confirmation with a 200, and the homepage total rises.
@@ -129,13 +148,13 @@ dashboard instead of using `stripe listen`.
 
 Admitting an animal, moving it through the placement lifecycle and recording a
 donation are staff actions, protected by one shared password supplied as
-`ADMIN_PASSWORD`. Send it as the password half of an HTTP Basic credential; the
+`ADMIN_PASSWORD`, set to the same value for every service. Send it as the password half of an HTTP Basic credential; the
 username is ignored, because there is one shared secret rather than a set of
 accounts.
 
 ```powershell
 $env:ADMIN_PASSWORD = Read-Host "Choose a staff password"   # typed at a prompt, so not saved in shell history
-python app.py
+# then start each service from this window, as in "Running locally"
 ```
 
 Staff then sign in at **`/staff`**, the staff portal, with that password. It is
@@ -164,7 +183,7 @@ reads the password from the environment, so it never appears in a command:
 
 ```powershell
 $auth = @{ Authorization = "Basic " + [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes("staff:$env:ADMIN_PASSWORD")) }
-$api = "http://localhost:8000/api"
+$api = "http://localhost:5173/api"   # the website dev server forwards each call to its service
 function Send($method, $path, $body) { Invoke-RestMethod -Method $method "$api$path" -Headers $auth -ContentType "application/json" -Body ($body | ConvertTo-Json) }
 ```
 
@@ -183,16 +202,19 @@ function Send($method, $path, $body) { Invoke-RestMethod -Method $method "$api$p
 | Record adoptions arranged offline | `Send Post /animals/offline-adoptions @{ animal_count = 300; adopted_on = "2025-12-31"; note = "January 2018 to December 2025" }` |
 | List recent donations | `(Invoke-RestMethod "$api/donations?limit=20" -Headers $auth).donations` |
 
-## Frontend
+## Website
 
-The React app lives in `frontend/` and is built by Vite into `static/dist`,
-which is committed, so running the site needs Python only. To change the
-frontend:
+The React app lives in `ui/` and is built by Vite into `ui/dist`, plain static
+files. The build is not committed. Where each service lives is configuration:
+`ui/public/config.js` is loaded before the app, and the deployment replaces it
+with the real addresses. Locally its addresses are empty, so calls stay on the
+dev server and are forwarded.
 
-```powershell
+```bash
+cd ui
 npm ci            # once, installs the exact versions in package-lock.json
-npm run dev       # live-reloading preview on http://localhost:5173, with python app.py running for the API
-npm run build     # rebuilds static/dist; commit it with the source change
+npm run dev       # live-reloading site on http://localhost:5173, with the three services running
+npm run build     # static files in ui/dist
 ```
 
 The visual design follows three reference designs the project owner supplied:
@@ -202,37 +224,31 @@ PREV and NEXT. The logo is the rescue's own, recoloured blue.
 
 ## Tests
 
+Each service is tested on its own, from its own folder:
+
 ```bash
-pytest --cov=domains --cov-report=term-missing
+cd services/animals   && pytest --cov --cov-report=term-missing
+cd services/donations && pytest --cov --cov-report=term-missing
+cd services/enquiries && pytest --cov --cov-report=term-missing
 ```
 
-Coverage is measured against `domains/` and excludes Flask blueprints
-(`routes.py`), which are routing glue rather than business logic. The
-configuration lives in `.coveragerc`.
+Coverage is measured on each service's domain package and excludes Flask
+blueprints (`routes.py`), which are routing glue rather than business logic;
+each service's `.coveragerc` says so. The donations tests check the call to the
+animals service over real HTTP, against a stand-in served on a random local
+port (`tests/animals_stub.py`): known and unknown animals, a 500, a slow answer
+cut off at the timeout, and a stopped service.
 
-Final coverage, measured 2026-10-04:
+Coverage after the split, measured 2026-11-17:
 
 ```
-Name                              Stmts   Miss  Cover
------------------------------------------------------
-domains/animals/models.py           242      0   100%
-domains/animals/photos.py            68      0   100%
-domains/animals/repository.py       118      0   100%
-domains/animals/service.py          172      0   100%
-domains/donations/models.py         161      0   100%
-domains/donations/payments.py        67      0   100%
-domains/donations/repository.py      43      0   100%
-domains/donations/service.py         75      0   100%
-domains/enquiries/models.py          90      0   100%
-domains/enquiries/repository.py      25      0   100%
-domains/enquiries/service.py         21      0   100%
------------------------------------------------------
-TOTAL                              1082      0   100%
-
-404 passed
+animals    animals/models.py 100%  photos.py 100%  repository.py 100%  service.py 100%    205 passed
+donations  animals_client.py 100%  models.py 100%  payments.py 100%
+           repository.py 100%  service.py 100%                                         195 passed
+enquiries  models.py 100%  repository.py 100%  service.py 100%                          41 passed
 ```
 
-### Clean-clone check (2026-10-04)
+### Clean-clone check of the Assignment 1 monolith (2026-10-04)
 
 A fresh `git clone` from GitHub into an empty folder, a new virtual
 environment, `pip install -r requirements.txt` and `python app.py`, with no
