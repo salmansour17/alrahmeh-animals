@@ -185,3 +185,80 @@ row as the audit trail. Going live requires the rescue to open a merchant
 account with a regional provider and a new adapter tested against its sandbox,
 which would charge JOD directly and need no conversion. Until then, CliQ and
 bank-transfer donations are recorded by staff through the existing endpoint.
+
+## 6. Three services along the Assignment 1 seams; donations is the only service that calls another
+
+Date: 2026-11-17
+Status: Decided
+
+Context: Assignment 2 asks for one service per feature domain, each in its own
+container with its own database, reaching the others only over HTTP. This
+project has three domains: animal intake and adoption, the donation and impact
+ledger, and enquiries (contact and volunteer messages, added on 2026-10-02 and
+kept apart by the same boundary test as the other two). Assignment 2 also
+replaces the shared admin password with per-staff accounts, which the staff
+endpoints of every service must recognise. Two needs cross between domains. A
+donation earmarked for an animal asks, through the one-method `AnimalDirectory`
+interface declared in ADR-2, whether that animal exists. And the staff ledger
+lists earmarked donations by animal id alone, where staff need the animal's
+name: in one database that would have been a join, and after the split the two
+tables live in different databases.
+
+Decision: Three services, one per domain, keeping every Assignment 1 boundary.
+`animals` owns animals, placements, offline adoptions, photos and the staff
+accounts; `donations` owns the ledger, Stripe payments and impact statistics;
+`enquiries` owns contact and volunteer messages. Three things cross service
+boundaries. The earmark check: `AnimalDirectory` gets a second implementation
+that calls `GET /api/animals/<id>` with a timeout, and the donation service
+itself does not change. The name lookup: when staff list donations, the
+donations service collects the page's distinct animal ids and asks the animals
+service for all of their names in one batch call, keeping the answers in memory
+for a few minutes because names rarely change; if animals is unreachable, the
+list still loads and shows the bare id marked "name unavailable". Both calls go
+one way, from donations to animals, and the animals service calls nobody, so it
+can be deployed and tested without the others. The staff token: the animals service issues it at
+login, and donations and enquiries each check it on their own with a shared
+signing key, without calling animals. The homepage counters stay in the
+browser, which already calls each service separately. Small infrastructure
+files (database connection, migration runner, token check) are copied into each
+service, not shared. When the animals service is unreachable or times out,
+checkout goes ahead with the earmark marked unverified and the payment webhook
+checks it again when the money arrives, so a donor is never turned away; staff
+recording an offline donation get a clear 503 asking them to retry, because
+they can, and an unchecked typo would otherwise enter an append-only ledger.
+
+Alternatives considered: **Merging enquiries into the animals service** would
+give two services, and was rejected because it undoes a domain boundary that
+has held since Assignment 1: enquiries share no tables and no rules with
+animals, and merging them would leave the boundary test proving less than it
+does now. **Every service calling animals to check each staff token** was
+rejected because recording a cash donation or reading a message would then
+depend on the animals service being up, a runtime dependency bought only to
+make revocation instant. **A server-side impact call combining the homepage
+counters** was rejected because the browser already does this, and it would
+add a cross-service call for data the UI can fetch directly. **One call per
+donation row** for the animal's name was rejected because a page of fifty
+donations would make up to fifty requests; one batch call per page bounds it.
+**Copying animal names into the donations table** when a gift is recorded was
+rejected because it would duplicate data the animals service owns, and the
+copy would go stale when a name is corrected. **The animals service calling
+donations** (for example, to show what was raised for an animal on its profile)
+was rejected because calls in both directions would make each service depend on
+the other; the browser fetches that figure instead. **A shared Python
+package** for the copied infrastructure was rejected because all three services
+would then have to release in lockstep, which is the coupling the split exists
+to remove.
+
+Consequences: ADR-2 held: the split moves folders and replaces one in-process
+adapter with an HTTP client, and the boundary test carries on per service. The
+costs: a third container, database, login and Container App, each scaling to
+zero (ADR-8 covers what they cost). The name cache can show a name for a few
+minutes after it changes, which is harmless in a staff list but means it must
+never be used to validate anything; the earmark check always asks fresh.
+Integrity across the seam rests on one
+HTTP check that checkout deliberately skips during an outage, so a ledger row
+can name an animal that does not exist; the webhook logs each unverified
+earmark for staff. A deactivated staff account keeps working on donations and
+enquiries until its token expires, so the token lifetime is a security
+setting, not a convenience. The copied infrastructure exists three times and
+must be fixed three times when it changes.
