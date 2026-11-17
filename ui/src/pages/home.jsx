@@ -3,7 +3,7 @@
 // typed in, and while a number is loading or unavailable the page shows a dash,
 // never a guess.
 import { Link } from "react-router-dom";
-import { api, useApi } from "../api.js";
+import { api, assetUrl, useApi } from "../api.js";
 import { BowlIcon, Cloud, HeartIcon, HomeIcon, PawPrint, Pill, Portrait } from "../art.jsx";
 import { ORG, WaysToHelp } from "./about.jsx";
 import { AnimalCard } from "./animals.jsx";
@@ -36,7 +36,7 @@ export function Home() {
         </p>
         <div className="hero-photo">
           {star?.photo_url ? (
-            <img src={star.photo_url} alt={`${star.name}, waiting for a home`} />
+            <img src={assetUrl(star.photo_url)} alt={`${star.name}, waiting for a home`} />
           ) : (
             <Portrait species={star?.species ?? "dog"} name={star?.name ?? "our friends"} />
           )}

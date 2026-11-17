@@ -1,8 +1,8 @@
 {
-  "name": "alrahmeh-frontend",
+  "name": "alrahmeh-ui",
   "private": true,
   "version": "1.0.0",
-  "description": "React frontend for the Al-Rahmeh Association for Animals site. Built into static/dist, which Flask serves; Node is needed only to change the frontend, never to run the app.",
+  "description": "The Al-Rahmeh Association for Animals website. Built into ui/dist as static files that call the animals, donations and enquiries services over HTTP. Node is a build tool only.",
   "type": "module",
   "scripts": {
     "dev": "vite",

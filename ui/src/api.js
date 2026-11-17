@@ -10,13 +10,29 @@ export class ApiError extends Error {
   }
 }
 
+// Each API path belongs to exactly one service (ADR-6). The addresses come from
+// public/config.js, which the deployment overwrites; an empty address means
+// this same origin, which is how local development works through Vite's proxy.
+const config = window.ALRAHMEH_CONFIG ?? {};
+
+function serviceUrl(path) {
+  if (path.startsWith("/api/donations")) return (config.donationsUrl ?? "") + path;
+  if (path.startsWith("/api/enquiries")) return (config.enquiriesUrl ?? "") + path;
+  // /api/animals and /api/requests both belong to the animals service.
+  return (config.animalsUrl ?? "") + path;
+}
+
+// For URLs the services hand back for the browser to load itself, such as an
+// animal's photo_url ("/api/animals/3/photo?v=..."): same rule as API calls.
+export const assetUrl = (path) => (path && path.startsWith("/api/") ? serviceUrl(path) : path);
+
 async function request(path, options = {}, extraHeaders = {}) {
   const headers = { Accept: "application/json", ...extraHeaders };
   if (options.body && !headers["Content-Type"]) headers["Content-Type"] = "application/json";
 
   let response;
   try {
-    response = await fetch(path, { ...options, headers });
+    response = await fetch(serviceUrl(path), { ...options, headers });
   } catch {
     throw new ApiError(0, "network_error", "Could not reach the server. Please try again.");
   }

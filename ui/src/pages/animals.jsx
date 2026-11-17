@@ -3,7 +3,7 @@
 // rendered as text by React, which escapes it.
 import { useEffect, useRef, useState } from "react";
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { api, useApi, useSubmit } from "../api.js";
+import { api, assetUrl, useApi, useSubmit } from "../api.js";
 import {
   HeartIcon,
   HomeIcon,
@@ -153,7 +153,7 @@ function PawHero({ faces }) {
             <ellipse className="toe-shape" cx={toe.cx} cy={toe.cy} rx={toe.rx} ry={toe.ry} />
             {faces[i]?.photo_url ? (
               <image
-                href={faces[i].photo_url}
+                href={assetUrl(faces[i].photo_url)}
                 x={toe.cx - toe.rx}
                 y={toe.cy - toe.ry}
                 width={toe.rx * 2}
@@ -232,7 +232,7 @@ export function AnimalDetail() {
   // Fetch the neighbours' photos in the background, so PREV and NEXT are instant.
   useEffect(() => {
     [prev, next].forEach((animal) => {
-      if (animal?.photo_url) new Image().src = animal.photo_url;
+      if (animal?.photo_url) new Image().src = assetUrl(animal.photo_url);
     });
   }, [prev, next]);
 
@@ -376,7 +376,7 @@ function Fact({ label, value }) {
 function AnimalPhoto({ animal }) {
   const [failed, setFailed] = useState(false);
   return animal.photo_url && !failed ? (
-    <img src={animal.photo_url} alt={`Photo of ${animal.name}`} loading="lazy" onError={() => setFailed(true)} />
+    <img src={assetUrl(animal.photo_url)} alt={`Photo of ${animal.name}`} loading="lazy" onError={() => setFailed(true)} />
   ) : (
     <Portrait species={animal.species} name={animal.name} />
   );

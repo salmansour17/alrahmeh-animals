@@ -4,7 +4,7 @@
 // allowed: a refused action shows the server's own message.
 import { useState } from "react";
 import { Link } from "react-router-dom";
-import { api, staffApi, useApi, useSubmit } from "../api.js";
+import { api, assetUrl, staffApi, useApi, useSubmit } from "../api.js";
 
 const TABS = [
   { key: "requests", label: "Adoption & foster requests" },
@@ -519,7 +519,7 @@ function AnimalRow({ animal, client, onChange }) {
       </form>
       <div className="row photo-input">
         {animal.photo_url && (
-          <img className="photo-thumb" src={animal.photo_url} alt={`Current photo of ${animal.name}`} />
+          <img className="photo-thumb" src={assetUrl(animal.photo_url)} alt={`Current photo of ${animal.name}`} />
         )}
         <label className="button button-soft">
           {uploading ? "Uploading…" : animal.photo_url ? "Replace photo" : "Add a photo"}
