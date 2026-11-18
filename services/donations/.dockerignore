@@ -1,0 +1,11 @@
+# The Dockerfile copies named files only, so this is a second guard: none of
+# these is ever sent to the Docker build, let alone copied into the image.
+.env
+.env.*
+tests/
+__pycache__/
+*.pyc
+.pytest_cache/
+.coverage
+htmlcov/
+data/
