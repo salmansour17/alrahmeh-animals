@@ -27,6 +27,7 @@ from animals.repository import SqlAnimalRepository, SqlPhotoStore, SqlPlacementR
 from animals.routes import create_animals_blueprint, create_requests_blueprint
 from animals.service import AnimalService, PhotoService, PlacementService
 from config import Config, load_config
+from cors import enable_cors
 from db import Database
 from security import require_admin
 
@@ -88,6 +89,7 @@ def create_app(config: Config | None = None, database: Database | None = None) -
 
     app.register_error_handler(HTTPException, _json_http_error)
     _register_meta_routes(app)
+    enable_cors(app, config.cors_origins)
     return app
 
 

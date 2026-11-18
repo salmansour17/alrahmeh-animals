@@ -12,6 +12,7 @@ from __future__ import annotations
 import logging
 import os
 from dataclasses import dataclass, field
+from urllib.parse import urlsplit
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +42,8 @@ class Config:
     # so a Config built directly (as every test does) starts empty; the
     # environment default in load_config turns it on.
     sample_animals: bool = False
+    # Website origins allowed to call this service from a browser (cors.py).
+    cors_origins: frozenset[str] = frozenset()
     service: str = SERVICE
 
 
@@ -54,6 +57,7 @@ def load_config() -> Config:
         # Deliberately no default: unset disables the staff endpoints rather
         # than falling back to a value an attacker could guess.
         admin_password=os.environ.get("ADMIN_PASSWORD") or None,
+        cors_origins=_read_cors_origins(),
         sample_animals=os.environ.get("SAMPLE_ANIMALS", "1").strip() != "0",
     )
 
@@ -77,3 +81,36 @@ def _read_port() -> int:
         logger.warning("PORT=%d is out of range; using %d", port, DEFAULT_PORT)
         return DEFAULT_PORT
     return port
+
+
+def _read_cors_origins() -> frozenset[str]:
+    """Parse CORS_ORIGINS: website origins allowed to call this service,
+    comma separated, e.g. https://alrahmehui.z28.web.core.windows.net.
+
+    Each must be a plain http(s) origin. A wildcard or anything malformed is
+    dropped with a warning rather than widened or guessed at; unset means no
+    other origin may call this service from a browser.
+    """
+    origins = set()
+    for raw in os.environ.get("CORS_ORIGINS", "").split(","):
+        candidate = raw.strip().removesuffix("/")
+        if not candidate:
+            continue
+        if candidate == "*" or not _is_plain_origin(candidate):
+            logger.warning("CORS_ORIGINS entry %r is not a plain http(s) origin; ignored", raw.strip())
+            continue
+        origins.add(candidate)
+    return frozenset(origins)
+
+
+def _is_plain_origin(candidate: str) -> bool:
+    """http(s), a host, an optional port, and nothing else."""
+    parts = urlsplit(candidate)
+    return (
+        parts.scheme in ("http", "https")
+        and bool(parts.hostname)
+        and "@" not in parts.netloc
+        and not parts.path
+        and not parts.query
+        and not parts.fragment
+    )

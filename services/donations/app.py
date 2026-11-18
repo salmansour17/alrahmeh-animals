@@ -21,6 +21,7 @@ from werkzeug.exceptions import HTTPException
 from werkzeug.routing import IntegerConverter
 
 from config import Config, load_config
+from cors import enable_cors
 from db import Database
 from donations.animals_client import HttpAnimalDirectory
 from donations.models import OfflineMethods
@@ -110,6 +111,7 @@ def create_app(
 
     app.register_error_handler(HTTPException, _json_http_error)
     _register_meta_routes(app)
+    enable_cors(app, config.cors_origins)
     return app
 
 

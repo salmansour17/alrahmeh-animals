@@ -63,6 +63,8 @@ class Config:
     bank_account_name: str | None = None
     animals_url: str = DEFAULT_ANIMALS_URL
     animals_timeout_s: float = DEFAULT_ANIMALS_TIMEOUT_S
+    # Website origins allowed to call this service from a browser (cors.py).
+    cors_origins: frozenset[str] = frozenset()
     service: str = SERVICE
 
 
@@ -76,6 +78,7 @@ def load_config() -> Config:
         # Deliberately no default: unset disables the staff endpoints rather
         # than falling back to a value an attacker could guess.
         admin_password=os.environ.get("ADMIN_PASSWORD") or None,
+        cors_origins=_read_cors_origins(),
         stripe_secret_key=os.environ.get("STRIPE_SECRET_KEY") or None,
         stripe_webhook_secret=os.environ.get("STRIPE_WEBHOOK_SECRET") or None,
         public_base_url=_read_public_base_url(),
@@ -171,3 +174,23 @@ def _read_port() -> int:
         logger.warning("PORT=%d is out of range; using %d", port, DEFAULT_PORT)
         return DEFAULT_PORT
     return port
+
+
+def _read_cors_origins() -> frozenset[str]:
+    """Parse CORS_ORIGINS: website origins allowed to call this service,
+    comma separated, e.g. https://alrahmehui.z28.web.core.windows.net.
+
+    Each must be a plain http(s) origin. A wildcard or anything malformed is
+    dropped with a warning rather than widened or guessed at; unset means no
+    other origin may call this service from a browser.
+    """
+    origins = set()
+    for raw in os.environ.get("CORS_ORIGINS", "").split(","):
+        candidate = raw.strip().removesuffix("/")
+        if not candidate:
+            continue
+        if candidate == "*" or not _is_plain_origin(candidate):
+            logger.warning("CORS_ORIGINS entry %r is not a plain http(s) origin; ignored", raw.strip())
+            continue
+        origins.add(candidate)
+    return frozenset(origins)
