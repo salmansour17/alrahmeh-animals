@@ -23,8 +23,9 @@ FILS_PER_JOD = 1000
 JOD_DECIMAL_PLACES = 3
 MAX_DONATION_JOD = 10_000
 MAX_DONATION_FILS = MAX_DONATION_JOD * FILS_PER_JOD
-# The largest integer SQLite stores; anything above it cannot be an id or offset.
-SQLITE_MAX_INTEGER = 2**63 - 1
+# The largest BIGINT, the type of every id column; anything above it cannot be an
+# id or offset.
+MAX_ID = 2**63 - 1
 # Five integer digits is looser than the maximum on purpose: the pattern only
 # decides whether the text is a well-formed amount; the limit is a separate
 # rule with its own error message.
@@ -260,8 +261,8 @@ def _optional_positive_int(fields: Mapping[str, Any], name: str) -> int | None:
     if value is None:
         return None
     # bool is a subclass of int in Python, so True would otherwise pass as 1.
-    # Above SQLite's largest integer, sqlite3 would raise OverflowError.
-    if isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= SQLITE_MAX_INTEGER:
+    # Above the largest BIGINT, the driver could not send the value at all.
+    if isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= MAX_ID:
         raise ValidationError(f"{name} must be a positive integer")
     return value
 
@@ -292,6 +293,6 @@ def _query_int(name: str, raw: str | None, default: int) -> int:
     minus sign or an Arabic-Indic digit is rejected rather than converted."""
     if raw is None:
         return default
-    if not raw.isascii() or not raw.isdigit() or int(raw) > SQLITE_MAX_INTEGER:
+    if not raw.isascii() or not raw.isdigit() or int(raw) > MAX_ID:
         raise ValidationError(f"{name} must be a whole number")
     return int(raw)

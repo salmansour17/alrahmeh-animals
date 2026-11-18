@@ -12,7 +12,6 @@ from __future__ import annotations
 import logging
 import os
 from dataclasses import dataclass, field
-from pathlib import Path
 from urllib.parse import urlsplit
 
 logger = logging.getLogger(__name__)
@@ -21,9 +20,8 @@ logger = logging.getLogger(__name__)
 # a container, a process bound to the loopback interface is unreachable.
 BIND_HOST = "0.0.0.0"
 
+SERVICE = "donations"
 DEFAULT_PORT = 8000
-DEFAULT_DATA_DIR = "data"
-DATABASE_FILENAME = "donations.db"
 # Where donors are sent back to after Stripe Checkout: the UI's origin, not this
 # service's. The default is the Vite dev server; a deployment sets the static
 # website's address.
@@ -42,10 +40,12 @@ class Config:
 
     host: str
     port: int
-    data_dir: Path
     debug: bool
     # Secrets are excluded from repr, so printing or logging a Config (or a test
     # failure that shows one) can never reveal them.
+    # mssql://USER:PASSWORD@HOST:PORT/DATABASE[?encrypt=true]; see db.py. No
+    # default: it holds a password, so there is nothing safe to fall back to.
+    database_url: str | None = field(default=None, repr=False)
     # None means the staff endpoints are switched off; see security.py.
     admin_password: str | None = field(default=None, repr=False)
     # Stripe. None for either secret means the payment endpoints answer 503.
@@ -63,10 +63,7 @@ class Config:
     bank_account_name: str | None = None
     animals_url: str = DEFAULT_ANIMALS_URL
     animals_timeout_s: float = DEFAULT_ANIMALS_TIMEOUT_S
-
-    @property
-    def database_path(self) -> Path:
-        return self.data_dir / DATABASE_FILENAME
+    service: str = SERVICE
 
 
 def load_config() -> Config:
@@ -74,8 +71,8 @@ def load_config() -> Config:
     return Config(
         host=BIND_HOST,
         port=_read_port(),
-        data_dir=Path(os.environ.get("DATA_DIR") or DEFAULT_DATA_DIR).resolve(),
         debug=os.environ.get("FLASK_DEBUG", "0") == "1",
+        database_url=os.environ.get("DATABASE_URL") or None,
         # Deliberately no default: unset disables the staff endpoints rather
         # than falling back to a value an attacker could guess.
         admin_password=os.environ.get("ADMIN_PASSWORD") or None,
