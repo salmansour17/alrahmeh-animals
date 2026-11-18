@@ -1,7 +1,12 @@
 """Entry point of the animals service: animal intake, the placement lifecycle,
 adoption and foster requests, offline adoptions and photos.
 
-Start with:  python app.py
+Start with:  python app.py   (development: applies migrations, adds sample
+animals if the database has none, then serves)
+
+In a container the same steps run separately, so they happen once before the
+web server starts its workers: python migrate.py, python sample_animals.py,
+then gunicorn.
 
 The service answers JSON only. The website is a separate static build in ui/
 that calls this service and the others over HTTP (ADR-6). This service calls no
@@ -18,12 +23,11 @@ from werkzeug.exceptions import HTTPException
 from werkzeug.routing import IntegerConverter
 
 from animals.photos import MAX_PHOTO_BYTES, FileSystemPhotoStore, prepare_photo
-from animals.repository import SqliteAnimalRepository, SqlitePlacementRepository
+from animals.repository import SqlAnimalRepository, SqlPlacementRepository
 from animals.routes import create_animals_blueprint, create_requests_blueprint
 from animals.service import AnimalService, PhotoService, PlacementService
 from config import Config, load_config
 from db import Database
-from sample_animals import add_sample_animals
 from security import require_admin
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
@@ -38,10 +42,10 @@ AMMAN = timezone(timedelta(hours=3), "Asia/Amman")
 # limit in routes.py. Anything bigger is refused with 413 before parsing.
 MAX_REQUEST_BYTES = 64 * 1024
 
-# The largest integer SQLite can store. A larger id in a URL could never match a
-# row, and handing it to sqlite3 raises OverflowError, which would surface as a
-# 500, so such a URL simply does not match a route and answers 404.
-SQLITE_MAX_INTEGER = 2**63 - 1
+# The largest BIGINT, the type of every id column. A larger id in a URL could
+# never match a row, and the driver would fail to send it, which would surface
+# as a 500, so such a URL simply does not match a route and answers 404.
+MAX_ID = 2**63 - 1
 
 
 def amman_today() -> date:
@@ -49,39 +53,37 @@ def amman_today() -> date:
     return datetime.now(AMMAN).date()
 
 
-class SqliteIdConverter(IntegerConverter):
-    """Flask's <int:...> converter, capped at the largest value SQLite stores."""
+class IdConverter(IntegerConverter):
+    """Flask's <int:...> converter, capped at the largest id the database stores."""
 
     def __init__(self, url_map, *args, **kwargs) -> None:
-        kwargs.setdefault("max", SQLITE_MAX_INTEGER)
+        kwargs.setdefault("max", MAX_ID)
         super().__init__(url_map, *args, **kwargs)
 
 
-def create_app(config: Config | None = None) -> Flask:
+def create_app(config: Config | None = None, database: Database | None = None) -> Flask:
     """Build the service.
 
     Taking Config as an argument rather than reading the environment here is
-    what lets tests build an app against a temporary data directory without
-    mutating os.environ.
+    what lets tests build an app against their own database without mutating
+    os.environ. Building the app touches no database: migrations and sample
+    data run before it, once, not in every web server worker.
     """
     config = config or load_config()
     app = Flask(__name__, static_folder=None)
     app.config["APP_CONFIG"] = config
     app.config["MAX_CONTENT_LENGTH"] = MAX_REQUEST_BYTES
     # Before any blueprint is registered, so every <int:...> uses the bound.
-    app.url_map.converters["int"] = SqliteIdConverter
+    app.url_map.converters["int"] = IdConverter
 
     config.data_dir.mkdir(parents=True, exist_ok=True)
 
     # The composition root: concrete classes are chosen here and nowhere else.
-    database = Database(config.database_path)
-    database.initialise()
+    database = database or Database.from_url(config.database_url, appname=config.service)
     app.config["DATABASE"] = database
 
-    animal_service = AnimalService(SqliteAnimalRepository(database), today=amman_today)
-    placement_service = PlacementService(SqlitePlacementRepository(database), animal_service)
-    if config.sample_animals:
-        add_sample_animals(animal_service)
+    animal_service = AnimalService(SqlAnimalRepository(database), today=amman_today)
+    placement_service = PlacementService(SqlPlacementRepository(database), animal_service)
     photo_service = PhotoService(
         animal_service, FileSystemPhotoStore(config.photos_dir), prepare=prepare_photo
     )
@@ -125,10 +127,17 @@ def _register_meta_routes(app: Flask) -> None:
 
 
 def main() -> None:
+    """Development start: the same steps as the container, in one process."""
+    from migrate import apply_migrations
+    from sample_animals import add_sample_animals
+
     config = load_config()
-    app = create_app(config)
-    logger.info("Animals service on http://%s:%d", config.host, config.port)
-    logger.info("SQLite file: %s", config.database_path)
+    database = Database.from_url(config.database_url, appname=config.service)
+    apply_migrations(database)
+    if config.sample_animals:
+        add_sample_animals(AnimalService(SqlAnimalRepository(database), today=amman_today))
+    app = create_app(config, database)
+    logger.info("Animals service on http://%s:%d, database %s", config.host, config.port, database.name)
     app.run(host=config.host, port=config.port, debug=config.debug)
 
 

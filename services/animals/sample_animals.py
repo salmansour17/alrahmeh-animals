@@ -1,6 +1,7 @@
 """Sample animals, so a fresh install has animal pages to look at.
 
-They are added once, at startup, only while the database has no animals at
+They are added once, by `python sample_animals.py` at startup (after the
+migrations, before the web server), only while the database has no animals at
 all, and through AnimalService like any staff entry, so every rule that
 validates a real intake validates these too. Set SAMPLE_ANIMALS=0 to start
 with an empty database instead (config.py).
@@ -12,6 +13,7 @@ never dated in the future, whatever day the app is installed.
 from __future__ import annotations
 
 import logging
+import sys
 from datetime import timedelta
 
 from animals.service import AnimalService
@@ -76,6 +78,7 @@ def add_sample_animals(animals: AnimalService) -> int:
     """Admit the sample animals if there are no animals yet. Returns how many
     were added: 0 when the database already has animals of its own."""
     if animals.list_animals():
+        logger.info("The database already has animals: no sample animals added")
         return 0
     today = animals.today()
     for sample in SAMPLES:
@@ -113,3 +116,26 @@ def add_sample_animals(animals: AnimalService) -> int:
             animals.transition(animal.id, {"to": status, "reason": "Sample history"})
     logger.info("Added %d sample animals (set SAMPLE_ANIMALS=0 to start empty)", len(SAMPLES))
     return len(SAMPLES)
+
+
+def main() -> int:
+    """Run from the container's start command, after migrate.py and before the
+    web server, so the samples are added once rather than by every worker.
+    Does nothing when SAMPLE_ANIMALS=0 or the database already has animals."""
+    from animals.repository import SqlAnimalRepository
+    from app import amman_today
+    from config import load_config
+    from db import Database
+
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
+    config = load_config()
+    if not config.sample_animals:
+        logger.info("SAMPLE_ANIMALS=0: no sample animals")
+        return 0
+    database = Database.from_url(config.database_url, appname=f"{config.service}-samples")
+    add_sample_animals(AnimalService(SqlAnimalRepository(database), today=amman_today))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

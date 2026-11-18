@@ -1,6 +1,6 @@
 """Tests for the animal domain's business rules.
 
-The service runs against a real SqliteAnimalRepository on a temporary database
+The service runs against a real SqlAnimalRepository on a temporary database
 (the `database` fixture in conftest), not a hand-written fake. That exercises
 the repository's SQL and the service's rules together, and there is no fake
 whose behaviour could quietly drift from the real one.
@@ -18,7 +18,7 @@ from itertools import product
 import pytest
 from PIL import ExifTags, Image
 
-from db import SCHEMA_PATH
+from migrate import MIGRATIONS_DIR
 from animals.models import (
     AnimalProfile,
     MedicalRecordType,
@@ -38,7 +38,7 @@ from animals.photos import (
     FileSystemPhotoStore,
     prepare_photo,
 )
-from animals.repository import SqliteAnimalRepository, SqlitePlacementRepository
+from animals.repository import SqlAnimalRepository, SqlPlacementRepository
 from animals.service import (
     ALLOWED_TRANSITIONS,
     AdoptionAlreadyApproved,
@@ -90,8 +90,8 @@ VALID_ANIMAL = {
 
 
 @pytest.fixture
-def repository(database) -> SqliteAnimalRepository:
-    return SqliteAnimalRepository(database)
+def repository(database) -> SqlAnimalRepository:
+    return SqlAnimalRepository(database)
 
 
 @pytest.fixture
@@ -362,8 +362,8 @@ APPLICANT = {"name": "Rana Haddad", "email": "rana@example.org", "message": "We 
 
 
 @pytest.fixture
-def placement_repository(database) -> SqlitePlacementRepository:
-    return SqlitePlacementRepository(database)
+def placement_repository(database) -> SqlPlacementRepository:
+    return SqlPlacementRepository(database)
 
 
 @pytest.fixture
@@ -388,10 +388,10 @@ def _outcome(placement_repository, request_id) -> RequestOutcome:
 
 
 def test_request_enums_match_the_schema_check_constraints():
-    schema = SCHEMA_PATH.read_text(encoding="utf-8")
+    schema = (MIGRATIONS_DIR / "001_init.sql").read_text(encoding="utf-8")
     for column, enum in (("kind", RequestKind), ("outcome", RequestOutcome)):
         allowed = re.search(rf"CHECK \({column} IN \(([^)]*)\)\)", schema).group(1)
-        assert {v.strip().strip("'") for v in allowed.split(",")} == {e.value for e in enum}
+        assert {v.strip().removeprefix("N").strip("'") for v in allowed.split(",")} == {e.value for e in enum}
 
 
 ACCEPTED = {
@@ -931,3 +931,12 @@ def test_profile_needs_an_existing_animal(service):
     with pytest.raises(AnimalNotFound):
         service.profile(999)
 
+
+
+def test_a_date_column_that_is_not_a_date_fails_loudly():
+    """The driver returns DATE columns as dates; if that ever changed, mapping
+    a row should fail at once rather than store a string where a date belongs."""
+    from animals.repository import _as_date
+
+    with pytest.raises(TypeError, match="expected a DATE column"):
+        _as_date("2026-09-01")

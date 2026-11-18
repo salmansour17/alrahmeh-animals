@@ -1,17 +1,17 @@
-"""SQLite persistence for the animal domain.
+"""SQL Server persistence for the animal domain.
 
-The only module in the animals package that contains SQL. Every query uses `?`
-placeholders, so a value supplied by a request is always passed to SQLite as
-data and never spliced into the statement text.
+The only module in the animals package that contains SQL. Every query uses %s
+placeholders, so a value supplied by a request is always sent to the database
+as data and never spliced into the statement text.
 
-Rows never leave this module as sqlite3.Row objects: each is mapped to a frozen
+Rows never leave this module as driver rows: each is mapped to a frozen
 dataclass from models.py, so the service and routes have no idea a database is
 involved.
 """
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 from typing import Any
 
 from db import Database
@@ -37,8 +37,8 @@ from animals.models import (
 class _Conflict(Exception):
     """Raised inside a transaction to roll it back; never leaves this module."""
 
-class SqliteAnimalRepository:
-    """Implements service.AnimalRepository against the shared SQLite file."""
+class SqlAnimalRepository:
+    """Implements service.AnimalRepository against this service's database."""
 
     def __init__(self, database: Database) -> None:
         self._database = database
@@ -47,7 +47,7 @@ class SqliteAnimalRepository:
         with self._database.unit_of_work() as connection:
             cursor = connection.execute(
                 "INSERT INTO animals (name, species, breed, date_of_intake, status, notes) "
-                "VALUES (?, ?, ?, ?, ?, ?)",
+                "OUTPUT INSERTED.id VALUES (%s, %s, %s, %s, %s, %s)",
                 (
                     animal.name,
                     animal.species,
@@ -57,7 +57,7 @@ class SqliteAnimalRepository:
                     animal.notes,
                 ),
             )
-            new_id = cursor.lastrowid
+            new_id = cursor.fetchone()["id"]
         return Animal(
             id=new_id,
             name=animal.name,
@@ -71,7 +71,7 @@ class SqliteAnimalRepository:
     def get(self, animal_id: int) -> Animal | None:
         with self._database.unit_of_work() as connection:
             row = connection.execute(
-                "SELECT id, name, species, breed, date_of_intake, status, notes FROM animals WHERE id = ?", (animal_id,)
+                "SELECT id, name, species, breed, date_of_intake, status, notes FROM animals WHERE id = %s", (animal_id,)
             ).fetchone()
         return _to_animal(row) if row else None
 
@@ -83,7 +83,7 @@ class SqliteAnimalRepository:
                 ).fetchall()
             else:
                 rows = connection.execute(
-                    "SELECT id, name, species, breed, date_of_intake, status, notes FROM animals WHERE status = ? ORDER BY id",
+                    "SELECT id, name, species, breed, date_of_intake, status, notes FROM animals WHERE status = %s ORDER BY id",
                     (status.value,),
                 ).fetchall()
         return [_to_animal(row) for row in rows]
@@ -101,13 +101,13 @@ class SqliteAnimalRepository:
         with self._database.unit_of_work() as connection:
             row = connection.execute(
                 "SELECT born_on, colour, personality, weight_grams, about "
-                "FROM animal_profiles WHERE animal_id = ?",
+                "FROM animal_profiles WHERE animal_id = %s",
                 (animal_id,),
             ).fetchone()
         if row is None:
             return None
         return AnimalProfile(
-            born_on=date.fromisoformat(row["born_on"]) if row["born_on"] else None,
+            born_on=_as_date(row["born_on"]) if row["born_on"] else None,
             colour=row["colour"],
             personality=row["personality"],
             weight_grams=row["weight_grams"],
@@ -115,33 +115,38 @@ class SqliteAnimalRepository:
         )
 
     def save_profile(self, animal_id: int, profile: AnimalProfile) -> None:
-        """Create or replace the animal's profile in one statement."""
+        """Create or replace the animal's profile in one transaction.
+
+        SQL Server has no INSERT ... ON CONFLICT, so this updates the row and
+        inserts it only if there was none. UPDLOCK with SERIALIZABLE holds the
+        key range from the UPDATE to the INSERT, so two saves at once cannot
+        both find no row and both insert.
+        """
+        values = (
+            profile.born_on.isoformat() if profile.born_on else None,
+            profile.colour,
+            profile.personality,
+            profile.weight_grams,
+            profile.about,
+        )
         with self._database.unit_of_work() as connection:
             connection.execute(
-                "INSERT INTO animal_profiles "
-                "(animal_id, born_on, colour, personality, weight_grams, about) "
-                "VALUES (?, ?, ?, ?, ?, ?) "
-                "ON CONFLICT (animal_id) DO UPDATE SET born_on = excluded.born_on, "
-                "colour = excluded.colour, personality = excluded.personality, "
-                "weight_grams = excluded.weight_grams, about = excluded.about, "
-                "updated_at = datetime('now')",
-                (
-                    animal_id,
-                    profile.born_on.isoformat() if profile.born_on else None,
-                    profile.colour,
-                    profile.personality,
-                    profile.weight_grams,
-                    profile.about,
-                ),
+                "UPDATE animal_profiles WITH (UPDLOCK, SERIALIZABLE) "
+                "SET born_on = %s, colour = %s, personality = %s, weight_grams = %s, about = %s, "
+                "updated_at = SYSUTCDATETIME() WHERE animal_id = %s; "
+                "IF @@ROWCOUNT = 0 "
+                "INSERT INTO animal_profiles (animal_id, born_on, colour, personality, weight_grams, about) "
+                "VALUES (%s, %s, %s, %s, %s, %s)",
+                (*values, animal_id, animal_id, *values),
             )
 
     def add_offline_adoption(self, adoption: NewOfflineAdoption) -> OfflineAdoption:
         with self._database.unit_of_work() as connection:
             cursor = connection.execute(
-                "INSERT INTO offline_adoptions (animal_count, adopted_on, note) VALUES (?, ?, ?)",
+                "INSERT INTO offline_adoptions (animal_count, adopted_on, note) OUTPUT INSERTED.id VALUES (%s, %s, %s)",
                 (adoption.animal_count, adoption.adopted_on.isoformat(), adoption.note),
             )
-            new_id = cursor.lastrowid
+            new_id = cursor.fetchone()["id"]
         return OfflineAdoption(new_id, adoption.animal_count, adoption.adopted_on, adoption.note)
 
     def offline_adoptions(self) -> list[OfflineAdoption]:
@@ -151,7 +156,7 @@ class SqliteAnimalRepository:
                 "ORDER BY adopted_on DESC, id DESC"
             ).fetchall()
         return [
-            OfflineAdoption(row["id"], row["animal_count"], date.fromisoformat(row["adopted_on"]), row["note"])
+            OfflineAdoption(row["id"], row["animal_count"], _as_date(row["adopted_on"]), row["note"])
             for row in rows
         ]
 
@@ -186,13 +191,13 @@ class SqliteAnimalRepository:
                 return False
             if close_open_requests:
                 connection.execute(
-                    "UPDATE placement_requests SET outcome = ? WHERE animal_id = ? AND outcome = ?",
+                    "UPDATE placement_requests SET outcome = %s WHERE animal_id = %s AND outcome = %s",
                     (RequestOutcome.DECLINED.value, animal_id, RequestOutcome.OPEN.value),
                 )
             if adoption_fell_through:
                 connection.execute(
-                    "UPDATE placement_requests SET outcome = ? "
-                    "WHERE animal_id = ? AND kind = ? AND outcome = ?",
+                    "UPDATE placement_requests SET outcome = %s "
+                    "WHERE animal_id = %s AND kind = %s AND outcome = %s",
                     (
                         RequestOutcome.DECLINED.value,
                         animal_id,
@@ -206,7 +211,7 @@ class SqliteAnimalRepository:
         with self._database.unit_of_work() as connection:
             rows = connection.execute(
                 "SELECT from_status, to_status, reason, changed_at FROM status_changes "
-                "WHERE animal_id = ? ORDER BY id",
+                "WHERE animal_id = %s ORDER BY id",
                 (animal_id,),
             ).fetchall()
         return [
@@ -214,7 +219,7 @@ class SqliteAnimalRepository:
                 from_status=PlacementStatus(row["from_status"]),
                 to_status=PlacementStatus(row["to_status"]),
                 reason=row["reason"],
-                changed_at=row["changed_at"],
+                changed_at=_timestamp(row["changed_at"]),
             )
             for row in rows
         ]
@@ -223,7 +228,7 @@ class SqliteAnimalRepository:
         with self._database.unit_of_work() as connection:
             cursor = connection.execute(
                 "INSERT INTO medical_records (animal_id, record_type, description, occurred_on) "
-                "VALUES (?, ?, ?, ?)",
+                "OUTPUT INSERTED.id VALUES (%s, %s, %s, %s)",
                 (
                     animal_id,
                     record.record_type.value,
@@ -231,7 +236,7 @@ class SqliteAnimalRepository:
                     record.occurred_on.isoformat(),
                 ),
             )
-            new_id = cursor.lastrowid
+            new_id = cursor.fetchone()["id"]
         return MedicalRecord(
             id=new_id,
             animal_id=animal_id,
@@ -247,19 +252,19 @@ class SqliteAnimalRepository:
             if record_type is None:
                 rows = connection.execute(
                     "SELECT id, animal_id, record_type, description, occurred_on FROM medical_records "
-                    "WHERE animal_id = ? ORDER BY occurred_on, id",
+                    "WHERE animal_id = %s ORDER BY occurred_on, id",
                     (animal_id,),
                 ).fetchall()
             else:
                 rows = connection.execute(
                     "SELECT id, animal_id, record_type, description, occurred_on FROM medical_records "
-                    "WHERE animal_id = ? AND record_type = ? ORDER BY occurred_on, id",
+                    "WHERE animal_id = %s AND record_type = %s ORDER BY occurred_on, id",
                     (animal_id, record_type.value),
                 ).fetchall()
         return [_to_medical_record(row) for row in rows]
 
 
-class SqlitePlacementRepository:
+class SqlPlacementRepository:
     """Implements service.PlacementRepository: adoption and foster requests."""
 
     def __init__(self, database: Database) -> None:
@@ -269,7 +274,8 @@ class SqlitePlacementRepository:
         with self._database.unit_of_work() as connection:
             cursor = connection.execute(
                 "INSERT INTO placement_requests "
-                "(animal_id, kind, applicant_name, applicant_email, message) VALUES (?, ?, ?, ?, ?)",
+                "(animal_id, kind, applicant_name, applicant_email, message) "
+                "OUTPUT INSERTED.id VALUES (%s, %s, %s, %s, %s)",
                 (
                     animal_id,
                     request.kind.value,
@@ -278,14 +284,14 @@ class SqlitePlacementRepository:
                     request.message,
                 ),
             )
-            new_id = cursor.lastrowid
+            new_id = cursor.fetchone()["id"]
         return self.get_request(new_id)
 
     def get_request(self, request_id: int) -> PlacementRequest | None:
         with self._database.unit_of_work() as connection:
             row = connection.execute(
                 "SELECT id, animal_id, kind, applicant_name, applicant_email, message, outcome, "
-                "submitted_at FROM placement_requests WHERE id = ?",
+                "submitted_at FROM placement_requests WHERE id = %s",
                 (request_id,),
             ).fetchone()
         return _to_request(row) if row else None
@@ -300,7 +306,7 @@ class SqlitePlacementRepository:
             else:
                 rows = connection.execute(
                     "SELECT id, animal_id, kind, applicant_name, applicant_email, message, outcome, "
-                    "submitted_at FROM placement_requests WHERE outcome = ? ORDER BY id",
+                    "submitted_at FROM placement_requests WHERE outcome = %s ORDER BY id",
                     (outcome.value,),
                 ).fetchall()
         return [_to_request(row) for row in rows]
@@ -326,7 +332,7 @@ class SqlitePlacementRepository:
         try:
             with self._database.unit_of_work() as connection:
                 decided = connection.execute(
-                    "UPDATE placement_requests SET outcome = ? WHERE id = ? AND outcome = ?",
+                    "UPDATE placement_requests SET outcome = %s WHERE id = %s AND outcome = %s",
                     (new.value, request_id, expected.value),
                 )
                 if decided.rowcount != 1:
@@ -336,8 +342,8 @@ class SqlitePlacementRepository:
                 if move is not None:
                     for kind in decline_open:
                         connection.execute(
-                            "UPDATE placement_requests SET outcome = ? "
-                            "WHERE animal_id = ? AND kind = ? AND outcome = ? AND id != ?",
+                            "UPDATE placement_requests SET outcome = %s "
+                            "WHERE animal_id = %s AND kind = %s AND outcome = %s AND id != %s",
                             (
                                 RequestOutcome.DECLINED.value,
                                 move.animal_id,
@@ -354,18 +360,19 @@ class SqlitePlacementRepository:
 def _move_animal(connection: Any, move: StatusMove) -> bool:
     """The one place an animal's status changes, with its history row.
 
-    The `AND status = ?` clause is what makes this safe when two members of
-    staff act at once: SQLite serialises the two UPDATEs, the first matches the
-    row, and the second finds the status already changed and matches nothing.
+    The `AND status = %s` clause is what makes this safe when two members of
+    staff act at once: the database locks the row for the first UPDATE, and the
+    second, once it gets the row, finds the status already changed and matches
+    nothing.
     """
     cursor = connection.execute(
-        "UPDATE animals SET status = ? WHERE id = ? AND status = ?",
+        "UPDATE animals SET status = %s WHERE id = %s AND status = %s",
         (move.new.value, move.animal_id, move.expected.value),
     )
     if cursor.rowcount != 1:
         return False
     connection.execute(
-        "INSERT INTO status_changes (animal_id, from_status, to_status, reason) VALUES (?, ?, ?, ?)",
+        "INSERT INTO status_changes (animal_id, from_status, to_status, reason) VALUES (%s, %s, %s, %s)",
         (move.animal_id, move.expected.value, move.new.value, move.reason),
     )
     return True
@@ -380,7 +387,7 @@ def _to_request(row: Any) -> PlacementRequest:
         applicant_email=row["applicant_email"],
         message=row["message"],
         outcome=RequestOutcome(row["outcome"]),
-        submitted_at=row["submitted_at"],
+        submitted_at=_timestamp(row["submitted_at"]),
     )
 
 
@@ -390,7 +397,7 @@ def _to_animal(row: Any) -> Animal:
         name=row["name"],
         species=row["species"],
         breed=row["breed"],
-        intake_date=date.fromisoformat(row["date_of_intake"]),
+        intake_date=_as_date(row["date_of_intake"]),
         status=PlacementStatus(row["status"]),
         notes=row["notes"],
     )
@@ -402,5 +409,19 @@ def _to_medical_record(row: Any) -> MedicalRecord:
         animal_id=row["animal_id"],
         record_type=MedicalRecordType(row["record_type"]),
         description=row["description"],
-        occurred_on=date.fromisoformat(row["occurred_on"]),
+        occurred_on=_as_date(row["occurred_on"]),
     )
+
+
+def _as_date(value: Any) -> date:
+    """DATE columns arrive from pymssql as datetime.date already. This only
+    narrows the type for the dataclass and fails loudly if that ever changes."""
+    if not isinstance(value, date):
+        raise TypeError(f"expected a DATE column, got {type(value).__name__}")
+    return value
+
+
+def _timestamp(value: datetime) -> str:
+    """DATETIME2 columns arrive as datetime. The API has always shown them as
+    "YYYY-MM-DD HH:MM:SS" in UTC, so they are formatted back to that."""
+    return value.strftime("%Y-%m-%d %H:%M:%S")

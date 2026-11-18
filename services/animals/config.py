@@ -20,9 +20,9 @@ logger = logging.getLogger(__name__)
 # a container, a process bound to the loopback interface is unreachable.
 BIND_HOST = "0.0.0.0"
 
+SERVICE = "animals"
 DEFAULT_PORT = 8000
 DEFAULT_DATA_DIR = "data"
-DATABASE_FILENAME = "animals.db"
 PHOTOS_DIRNAME = "photos"
 
 
@@ -34,17 +34,18 @@ class Config:
     port: int
     data_dir: Path
     debug: bool
-    # Excluded from repr, so printing or logging a Config never reveals it.
+    # Secrets are excluded from repr, so printing or logging a Config never
+    # reveals them.
+    # mssql://USER:PASSWORD@HOST:PORT/DATABASE[?encrypt=true]; see db.py. No
+    # default: it holds a password, so there is nothing safe to fall back to.
+    database_url: str | None = field(default=None, repr=False)
     # None means the staff endpoints are switched off; see security.py.
     admin_password: str | None = field(default=None, repr=False)
     # Add sample animals at startup when there are none. Off unless asked for,
     # so a Config built directly (as every test does) starts empty; the
     # environment default in load_config turns it on.
     sample_animals: bool = False
-
-    @property
-    def database_path(self) -> Path:
-        return self.data_dir / DATABASE_FILENAME
+    service: str = SERVICE
 
     @property
     def photos_dir(self) -> Path:
@@ -60,6 +61,7 @@ def load_config() -> Config:
         port=_read_port(),
         data_dir=Path(os.environ.get("DATA_DIR") or DEFAULT_DATA_DIR).resolve(),
         debug=os.environ.get("FLASK_DEBUG", "0") == "1",
+        database_url=os.environ.get("DATABASE_URL") or None,
         # Deliberately no default: unset disables the staff endpoints rather
         # than falling back to a value an attacker could guess.
         admin_password=os.environ.get("ADMIN_PASSWORD") or None,

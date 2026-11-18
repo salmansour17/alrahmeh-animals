@@ -13,7 +13,10 @@ from dataclasses import replace
 
 import pytest
 
-from app import create_app
+from animals.repository import SqlAnimalRepository
+from animals.service import AnimalService
+from app import amman_today, create_app
+from sample_animals import add_sample_animals
 from tests.conftest import ADMIN_PASSWORD
 from tests.test_animals_service import image_bytes, opened
 
@@ -78,7 +81,7 @@ def test_public_view_hides_notes_and_non_vaccination_records(client):
         ("get", "/api/animals/999", None, 404, "not_found"),
         ("post", "/api/animals/{id}/transitions", {"to": "adopted"}, 409, "illegal_transition"),
         ("get", "/api/no-such-thing", None, 404, "not_found"),
-        # Beyond SQLite's largest integer: a 404, not an overflow inside sqlite3.
+        # Beyond the largest BIGINT id: a 404, not an overflow inside the driver.
         ("get", "/api/animals/99999999999999999999999", None, 404, "not_found"),
         ("post", "/api/animals/99999999999999999999999/requests", {"kind": "adoption"}, 404, "not_found"),
     ],
@@ -91,11 +94,13 @@ def test_errors_map_to_status_codes_with_json_bodies(client, method, path, body,
     assert response.get_json()["error"] == error
 
 
-def test_sample_animals_are_added_once_to_an_empty_database(config):
-    with_samples = replace(config, sample_animals=True)
-    animals = create_app(with_samples).test_client().get("/api/animals").get_json()["animals"]
+def test_sample_animals_are_added_once_to_an_empty_database(client, database):
+    service = AnimalService(SqlAnimalRepository(database), today=amman_today)
+    assert add_sample_animals(service) == 6
+    animals = client.get("/api/animals").get_json()["animals"]
     # A restart finds animals already there and adds nothing.
-    again = create_app(with_samples).test_client().get("/api/animals").get_json()["animals"]
+    assert add_sample_animals(service) == 0
+    again = client.get("/api/animals").get_json()["animals"]
 
     assert len(animals) == len(again) == 6
     assert {a["status"] for a in animals} == {"available", "fostering", "adopted"}
