@@ -7,7 +7,7 @@ and what the choice costs later.
 ## 1. Flask with stdlib sqlite3 for the backend
 
 Date: 2026-09-25
-Status: Decided
+Status: Superseded by [7]
 
 Context: The application has two feature domains, roughly five tables, no user
 accounts and no long-running or I/O-bound work, and it has to run as a single
@@ -78,7 +78,7 @@ copy of.
 ## 3. Cross-domain references are soft; money is stored in minor units
 
 Date: 2026-09-28
-Status: Decided
+Status: Superseded by [7]
 
 Context: Donors to this organisation frequently give toward one named animal's
 treatment, so the ledger has to be able to point at an animal. But the two
@@ -262,3 +262,90 @@ earmark for staff. A deactivated staff account keeps working on donations and
 enquiries until its token expires, so the token lifetime is a security
 setting, not a convenience. The copied infrastructure exists three times and
 must be fixed three times when it changes.
+
+## 7. SQL Server, one database per service, changed only by versioned migrations
+
+Date: 2026-11-18
+Status: Decided
+
+Context: Assignment 2 moves storage from one SQLite file to SQL Server, one
+database per service (ADR-6), on Azure SQL's serverless tier. Three things in
+the Assignment 1 storage stop working there. The schema applied itself with
+`CREATE TABLE IF NOT EXISTS` on every boot, which can create a table but never
+change one that already holds data. Animal photos were files under DATA_DIR,
+and a Container App's filesystem is wiped whenever it scales to zero or is
+redeployed. And a serverless database pauses when idle: the first connection
+after a quiet hour fails for up to about a minute while it resumes. No
+production data existed to carry over, because the Assignment 1 site was never
+deployed for the rescue.
+
+Decision: Each service has its own SQL Server database, reached through
+`DATABASE_URL` with `pymssql`, and its own login that can use only that
+database. Raw SQL stays, as in ADR-1, ported to T-SQL: `BIGINT IDENTITY` ids,
+`NVARCHAR` sized to the limits models.py already enforces, `DATE` and
+`DATETIME2` columns, and a name on every constraint so a later migration can
+refer to it. The decisions of ADR-3 carry over unchanged: money is a whole
+number of fils, and `donations.earmarked_animal_id` is a plain id with no
+foreign key, which is now the only possible design because the animals table
+is in another database. The ledger's append-only rule moves from SQLite
+triggers to an `INSTEAD OF UPDATE, DELETE` trigger that throws, so a change
+fails loudly instead of doing nothing.
+
+The schema is the numbered files in each service's `migrations/` folder,
+applied by our own runner, `migrate.py`. It applies the files the database has
+not recorded, in order, each in one transaction together with its row in
+`schema_migrations`. It stores each file's SHA-256 and refuses to start if an
+applied file has been edited, holds an exclusive application lock
+(`sp_getapplock`) so two copies cannot apply the same file at once, and never
+drops anything; a test fails if any migration contains DROP, TRUNCATE or
+DELETE FROM. It runs as its own start-up step before the web server
+(`python migrate.py`), as does adding the sample animals, so neither runs once
+per gunicorn worker. Each service starts from `001_init.sql`, the Assignment 1
+tables it owns ported to T-SQL. The animals service's `002_animal_photos.sql`
+moves photos into a `VARBINARY(MAX)` column, one row per animal with a version
+counter that is part of the photo's address. Photos were already re-encoded
+and capped at 1600 px, so each row is a few hundred kilobytes.
+
+Connections retry only on the errors that mean "not ready yet": Azure's 40613,
+40501 and 40197, and FreeTDS's 20002, 20003 and 20009. They wait 1, 2, 4, 8,
+15, 15 and 15 seconds between eight attempts, about a minute in all, which
+covers a database resuming from pause. Any other error, such as a wrong
+password (18456), fails at once. `?encrypt=true` in the URL makes the driver
+require encryption, which Azure SQL insists on.
+
+Alternatives considered: **Alembic** with SQLAlchemy was rejected because it
+adds two packages and a model layer to a project that writes its SQL by hand,
+and the runner the brief asks for is about a hundred lines I can explain.
+**Keeping `CREATE TABLE IF NOT EXISTS`** was rejected because it cannot change
+a table that holds data, which is exactly what the next migration has to do.
+**pyodbc** was rejected because it needs Microsoft's ODBC driver installed in
+the image as a system package, where the `pymssql` wheel brings its own.
+**Photos in Blob Storage**, or in a file share mounted into the container, were
+rejected because each is another Azure resource with its own credentials, and
+the brief allows one storage account, which serves the website. **One shared
+database with a schema per service** was rejected because the brief requires a
+database per service, and a shared one would let a service read another's
+tables.
+
+Recovery from a bad migration: migrations are forward-only. A migration that
+fails rolls back entirely, nothing is recorded, the service does not start,
+and the pipeline's health check fails the deployment; the fix is a corrected
+migration in a new file and a new deploy. A migration that applies but is
+wrong is corrected the same way, by a new migration, never by editing the
+applied one (the checksum stops that). If data itself is damaged, Azure SQL's
+automatic backups allow a point-in-time restore into a new database, which the
+service is then pointed at through `DATABASE_URL`.
+
+Consequences: Integrity lost at the seam: nothing in the database stops a
+donation from naming an animal that does not exist. It is compensated in code:
+the donations service checks the id over HTTP on every write (ADR-6), checkout
+and the payment webhook record an unverified earmark only while the animals
+service is unreachable and log each one for staff, and no endpoint in any
+service deletes an animal, so an id that was checked stays valid. The tests
+now need a SQL Server and take about a minute for the animals service instead
+of ten seconds; each run creates its own throwaway database and drops it at
+the end. Photos count toward the free offer's 32 GB per database, which at a
+few hundred kilobytes each is tens of thousands of photos. Startup includes a
+migration check and, after an idle hour, possibly a minute of waiting for the
+database, which the website has to present as "starting up" rather than as an
+error (ADR-8).
