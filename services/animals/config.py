@@ -12,7 +12,7 @@ from __future__ import annotations
 import logging
 import os
 from dataclasses import dataclass, field
-from pathlib import Path
+from urllib.parse import urlsplit
 
 logger = logging.getLogger(__name__)
 
@@ -20,10 +20,8 @@ logger = logging.getLogger(__name__)
 # a container, a process bound to the loopback interface is unreachable.
 BIND_HOST = "0.0.0.0"
 
+SERVICE = "animals"
 DEFAULT_PORT = 8000
-DEFAULT_DATA_DIR = "data"
-DATABASE_FILENAME = "animals.db"
-PHOTOS_DIRNAME = "photos"
 
 
 @dataclass(frozen=True)
@@ -32,25 +30,21 @@ class Config:
 
     host: str
     port: int
-    data_dir: Path
     debug: bool
-    # Excluded from repr, so printing or logging a Config never reveals it.
+    # Secrets are excluded from repr, so printing or logging a Config never
+    # reveals them.
+    # mssql://USER:PASSWORD@HOST:PORT/DATABASE[?encrypt=true]; see db.py. No
+    # default: it holds a password, so there is nothing safe to fall back to.
+    database_url: str | None = field(default=None, repr=False)
     # None means the staff endpoints are switched off; see security.py.
     admin_password: str | None = field(default=None, repr=False)
     # Add sample animals at startup when there are none. Off unless asked for,
     # so a Config built directly (as every test does) starts empty; the
     # environment default in load_config turns it on.
     sample_animals: bool = False
-
-    @property
-    def database_path(self) -> Path:
-        return self.data_dir / DATABASE_FILENAME
-
-    @property
-    def photos_dir(self) -> Path:
-        """Photos live beside the database, so DATA_DIR stays the one folder a
-        deployment has to keep."""
-        return self.data_dir / PHOTOS_DIRNAME
+    # Website origins allowed to call this service from a browser (cors.py).
+    cors_origins: frozenset[str] = frozenset()
+    service: str = SERVICE
 
 
 def load_config() -> Config:
@@ -58,11 +52,12 @@ def load_config() -> Config:
     return Config(
         host=BIND_HOST,
         port=_read_port(),
-        data_dir=Path(os.environ.get("DATA_DIR") or DEFAULT_DATA_DIR).resolve(),
         debug=os.environ.get("FLASK_DEBUG", "0") == "1",
+        database_url=os.environ.get("DATABASE_URL") or None,
         # Deliberately no default: unset disables the staff endpoints rather
         # than falling back to a value an attacker could guess.
         admin_password=os.environ.get("ADMIN_PASSWORD") or None,
+        cors_origins=_read_cors_origins(),
         sample_animals=os.environ.get("SAMPLE_ANIMALS", "1").strip() != "0",
     )
 
@@ -86,3 +81,36 @@ def _read_port() -> int:
         logger.warning("PORT=%d is out of range; using %d", port, DEFAULT_PORT)
         return DEFAULT_PORT
     return port
+
+
+def _read_cors_origins() -> frozenset[str]:
+    """Parse CORS_ORIGINS: website origins allowed to call this service,
+    comma separated, e.g. https://alrahmehui.z28.web.core.windows.net.
+
+    Each must be a plain http(s) origin. A wildcard or anything malformed is
+    dropped with a warning rather than widened or guessed at; unset means no
+    other origin may call this service from a browser.
+    """
+    origins = set()
+    for raw in os.environ.get("CORS_ORIGINS", "").split(","):
+        candidate = raw.strip().removesuffix("/")
+        if not candidate:
+            continue
+        if candidate == "*" or not _is_plain_origin(candidate):
+            logger.warning("CORS_ORIGINS entry %r is not a plain http(s) origin; ignored", raw.strip())
+            continue
+        origins.add(candidate)
+    return frozenset(origins)
+
+
+def _is_plain_origin(candidate: str) -> bool:
+    """http(s), a host, an optional port, and nothing else."""
+    parts = urlsplit(candidate)
+    return (
+        parts.scheme in ("http", "https")
+        and bool(parts.hostname)
+        and "@" not in parts.netloc
+        and not parts.path
+        and not parts.query
+        and not parts.fragment
+    )

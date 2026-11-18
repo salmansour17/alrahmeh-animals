@@ -143,13 +143,18 @@ class PhotoNotFound(LookupError):
 
 
 class PhotoStore(Protocol):
-    """Where animal photos are kept. The service never touches files itself."""
+    """Where animal photos are kept. The service never touches storage itself."""
 
     def save(self, animal_id: int, photo: bytes) -> None: ...
 
     def load(self, animal_id: int) -> bytes | None: ...
 
     def version(self, animal_id: int) -> int | None: ...
+
+    def versions(self, animal_ids: list[int]) -> dict[int, int]:
+        """The version of every listed animal that has a photo, in one call,
+        so a list of animals costs one query rather than one per animal."""
+        ...
 
 
 class AnimalRepository(Protocol):
@@ -432,8 +437,16 @@ class PhotoService:
     def photo_url(self, animal_id: int) -> str | None:
         """The photo's address, with its version, so a replaced photo is never
         served from a browser's cache. None when there is no photo yet."""
-        version = self._store.version(animal_id)
-        if version is None:
-            return None
-        return f"/api/animals/{animal_id}/photo?v={version}"
+        return _photo_url(animal_id, self._store.version(animal_id))
+
+    def photo_urls(self, animal_ids: list[int]) -> dict[int, str | None]:
+        """photo_url for many animals at once, for the animal list."""
+        versions = self._store.versions(animal_ids)
+        return {animal_id: _photo_url(animal_id, versions.get(animal_id)) for animal_id in animal_ids}
+
+
+def _photo_url(animal_id: int, version: int | None) -> str | None:
+    if version is None:
+        return None
+    return f"/api/animals/{animal_id}/photo?v={version}"
 

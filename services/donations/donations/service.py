@@ -2,7 +2,7 @@
 
 The service owns two small interfaces and depends on nothing else: the
 DonationRepository it stores through, and the AnimalDirectory it asks whether
-an earmarked animal exists. Neither mentions SQLite or the animal package;
+an earmarked animal exists. Neither mentions the database or the animal package;
 create_app supplies the concrete objects.
 """
 

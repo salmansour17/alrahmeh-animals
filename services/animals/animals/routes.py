@@ -111,7 +111,8 @@ def create_animals_blueprint(
     @bp.get("")
     def list_animals():
         animals = service.list_animals(request.args.get("status"))
-        return jsonify(animals=[public(animal) for animal in animals])
+        urls = photos.photo_urls([animal.id for animal in animals])
+        return jsonify(animals=[{**_public(animal), "photo_url": urls[animal.id]} for animal in animals])
 
     @bp.get("/stats")
     def placement_stats():

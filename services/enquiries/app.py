@@ -1,7 +1,10 @@
 """Entry point of the enquiries service: contact and volunteer messages from
 the public, kept for staff.
 
-Start with:  python app.py
+Start with:  python app.py   (development: applies migrations, then serves)
+
+In a container the migrations run first, once, as their own step
+(python migrate.py), then gunicorn starts the web server.
 
 The service answers JSON only. It calls no other service and no other service
 calls it (ADR-6); the website in ui/ calls it directly.
@@ -16,8 +19,9 @@ from werkzeug.exceptions import HTTPException
 from werkzeug.routing import IntegerConverter
 
 from config import Config, load_config
+from cors import enable_cors
 from db import Database
-from enquiries.repository import SqliteEnquiryRepository
+from enquiries.repository import SqlEnquiryRepository
 from enquiries.routes import create_enquiries_blueprint
 from enquiries.service import EnquiryService
 from security import require_admin
@@ -29,41 +33,40 @@ logger = logging.getLogger(__name__)
 # bigger is refused with 413 before parsing.
 MAX_REQUEST_BYTES = 64 * 1024
 
-# The largest integer SQLite can store; a larger id in a URL answers 404
-# instead of an OverflowError surfacing as a 500.
-SQLITE_MAX_INTEGER = 2**63 - 1
+# The largest BIGINT, the type of every id column; a larger id in a URL answers
+# 404 instead of a driver error surfacing as a 500.
+MAX_ID = 2**63 - 1
 
 
-class SqliteIdConverter(IntegerConverter):
-    """Flask's <int:...> converter, capped at the largest value SQLite stores."""
+class IdConverter(IntegerConverter):
+    """Flask's <int:...> converter, capped at the largest id the database stores."""
 
     def __init__(self, url_map, *args, **kwargs) -> None:
-        kwargs.setdefault("max", SQLITE_MAX_INTEGER)
+        kwargs.setdefault("max", MAX_ID)
         super().__init__(url_map, *args, **kwargs)
 
 
-def create_app(config: Config | None = None) -> Flask:
-    """Build the service from a Config, so tests can point it at a temporary
-    directory without touching os.environ."""
+def create_app(config: Config | None = None, database: Database | None = None) -> Flask:
+    """Build the service from a Config (and optionally a Database), so tests can
+    point it at their own database without touching os.environ. Building the
+    app touches no database: migrations run before it, once."""
     config = config or load_config()
     app = Flask(__name__, static_folder=None)
     app.config["APP_CONFIG"] = config
     app.config["MAX_CONTENT_LENGTH"] = MAX_REQUEST_BYTES
-    app.url_map.converters["int"] = SqliteIdConverter
-
-    config.data_dir.mkdir(parents=True, exist_ok=True)
+    app.url_map.converters["int"] = IdConverter
 
     # The composition root: concrete classes are chosen here and nowhere else.
-    database = Database(config.database_path)
-    database.initialise()
+    database = database or Database.from_url(config.database_url, appname=config.service)
     app.config["DATABASE"] = database
 
     app.register_blueprint(
-        create_enquiries_blueprint(EnquiryService(SqliteEnquiryRepository(database)))
+        create_enquiries_blueprint(EnquiryService(SqlEnquiryRepository(database)))
     )
 
     app.register_error_handler(HTTPException, _json_http_error)
     _register_meta_routes(app)
+    enable_cors(app, config.cors_origins)
     return app
 
 
@@ -93,10 +96,13 @@ def _register_meta_routes(app: Flask) -> None:
 
 
 def main() -> None:
+    from migrate import apply_migrations
+
     config = load_config()
-    app = create_app(config)
-    logger.info("Enquiries service on http://%s:%d", config.host, config.port)
-    logger.info("SQLite file: %s", config.database_path)
+    database = Database.from_url(config.database_url, appname=config.service)
+    apply_migrations(database)
+    app = create_app(config, database)
+    logger.info("Enquiries service on http://%s:%d, database %s", config.host, config.port, database.name)
     app.run(host=config.host, port=config.port, debug=config.debug)
 
 

@@ -1,9 +1,9 @@
-"""SQLite persistence for the donation ledger.
+"""SQL Server persistence for the donation ledger.
 
-The only module in the donations package that contains SQL, all of it with `?`
+The only module in the donations package that contains SQL, all of it with %s
 placeholders. There is deliberately no update or delete method: the ledger is
-append-only, and the class's shape says so. The schema's triggers back that up
-for anything that bypasses this class.
+append-only, and the class's shape says so. The trigger in 001_init.sql backs
+that up for anything that bypasses this class.
 """
 
 from __future__ import annotations
@@ -11,7 +11,7 @@ from __future__ import annotations
 from datetime import date
 from typing import Any
 
-from db import Database
+from db import Database, IntegrityError
 from donations.models import (
     Donation,
     DonationPurpose,
@@ -26,8 +26,8 @@ class _AlreadyRecorded(Exception):
     """Raised inside a transaction to roll it back; never leaves this module."""
 
 
-class SqliteDonationRepository:
-    """Implements service.DonationRepository against the shared SQLite file."""
+class SqlDonationRepository:
+    """Implements service.DonationRepository against this service's database."""
 
     def __init__(self, database: Database) -> None:
         self._database = database
@@ -56,15 +56,19 @@ class SqliteDonationRepository:
         try:
             with self._database.unit_of_work() as connection:
                 donation_id = _insert_donation(connection, donation)
-                payment = connection.execute(
-                    "INSERT INTO stripe_payments "
-                    "(session_id, donation_id, charged_amount_minor, charged_currency) "
-                    "VALUES (?, ?, ?, ?) ON CONFLICT (session_id) DO NOTHING",
-                    (charge.session_id, donation_id, charge.amount_minor, charge.currency),
-                )
-                if payment.rowcount == 0:
-                    # Undo the donation insert above: unit_of_work rolls back.
-                    raise _AlreadyRecorded
+                try:
+                    connection.execute(
+                        "INSERT INTO stripe_payments "
+                        "(session_id, donation_id, charged_amount_minor, charged_currency) "
+                        "VALUES (%s, %s, %s, %s)",
+                        (charge.session_id, donation_id, charge.amount_minor, charge.currency),
+                    )
+                except IntegrityError as error:
+                    # 2627/2601: the UNIQUE session_id is already there. Undo
+                    # the donation insert above: unit_of_work rolls back.
+                    if error.args and error.args[0] in (2627, 2601):
+                        raise _AlreadyRecorded from error
+                    raise
         except _AlreadyRecorded:
             return None
         return self.get(donation_id)
@@ -73,7 +77,7 @@ class SqliteDonationRepository:
         with self._database.unit_of_work() as connection:
             row = connection.execute(
                 "SELECT id, donor_name, amount_fils, purpose, earmarked_animal_id, received_at "
-                "FROM donations WHERE id = ?",
+                "FROM donations WHERE id = %s",
                 (donation_id,),
             ).fetchone()
         return _to_donation(row) if row else None
@@ -82,20 +86,22 @@ class SqliteDonationRepository:
         with self._database.unit_of_work() as connection:
             rows = connection.execute(
                 "SELECT id, donor_name, amount_fils, purpose, earmarked_animal_id, received_at "
-                "FROM donations ORDER BY received_at DESC, id DESC LIMIT ? OFFSET ?",
-                (page.limit, page.offset),
+                "FROM donations ORDER BY received_at DESC, id DESC "
+                "OFFSET %s ROWS FETCH NEXT %s ROWS ONLY",
+                (page.offset, page.limit),
             ).fetchall()
         return [_to_donation(row) for row in rows]
 
     def impact(self) -> ImpactSummary:
-        """All homepage figures, computed by SQLite from the ledger as it is now.
+        """All homepage figures, computed by the database from the ledger as it
+        is now.
 
-        The two SELECTs run inside one explicit transaction so they read the
-        same snapshot. Without it, a donation committed between them would make
+        The two SELECTs run in one SERIALIZABLE transaction so they read the
+        same rows. Without it, a donation committed between them would make
         the headline total disagree with the per-purpose totals.
         """
         with self._database.unit_of_work() as connection:
-            connection.execute("BEGIN")
+            connection.execute("SET TRANSACTION ISOLATION LEVEL SERIALIZABLE")
             headline = connection.execute(
                 "SELECT COALESCE(SUM(amount_fils), 0) AS total_fils, "
                 "COUNT(*) AS donation_count, "
@@ -123,7 +129,7 @@ def _insert_donation(connection: Any, donation: NewDonation) -> int:
     cursor = connection.execute(
         "INSERT INTO donations "
         "(donor_name, amount_fils, purpose, earmarked_animal_id, received_at) "
-        "VALUES (?, ?, ?, ?, ?)",
+        "OUTPUT INSERTED.id VALUES (%s, %s, %s, %s, %s)",
         (
             donation.donor_name,
             donation.amount_fils,
@@ -132,7 +138,7 @@ def _insert_donation(connection: Any, donation: NewDonation) -> int:
             donation.received_on.isoformat(),
         ),
     )
-    return cursor.lastrowid
+    return cursor.fetchone()["id"]
 
 
 def _to_donation(row: Any) -> Donation:
@@ -142,7 +148,13 @@ def _to_donation(row: Any) -> Donation:
         amount_fils=row["amount_fils"],
         purpose=DonationPurpose(row["purpose"]),
         earmarked_animal_id=row["earmarked_animal_id"],
-        # [:10] keeps the date part even if a row ever took the schema's
-        # datetime('now') default instead of the date the service supplies.
-        received_on=date.fromisoformat(row["received_at"][:10]),
+        received_on=_as_date(row["received_at"]),
     )
+
+
+def _as_date(value: Any) -> date:
+    """DATE columns arrive from pymssql as datetime.date already. This only
+    narrows the type for the dataclass and fails loudly if that ever changes."""
+    if not isinstance(value, date):
+        raise TypeError(f"expected a DATE column, got {type(value).__name__}")
+    return value

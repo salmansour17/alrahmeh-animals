@@ -17,8 +17,9 @@ SUBJECT_MAX = 150
 MESSAGE_MAX = 4000
 DEFAULT_PAGE_SIZE = 50
 MAX_PAGE_SIZE = 200
-# The largest integer SQLite stores; a larger offset would overflow sqlite3.
-SQLITE_MAX_INTEGER = 2**63 - 1
+# The largest BIGINT, the type of every id column; a larger offset could never
+# match a row.
+MAX_ID = 2**63 - 1
 
 # A field people never see on the form. Bots fill in every field they find.
 HONEYPOT_FIELD = "website"
@@ -157,6 +158,6 @@ def _enum(fields: Mapping[str, Any], name: str, enum_type: type[StrEnum]) -> Any
 def _query_int(name: str, raw: str | None, default: int) -> int:
     if raw is None:
         return default
-    if not raw.isascii() or not raw.isdigit() or int(raw) > SQLITE_MAX_INTEGER:
+    if not raw.isascii() or not raw.isdigit() or int(raw) > MAX_ID:
         raise ValidationError(f"{name} must be a whole number")
     return int(raw)

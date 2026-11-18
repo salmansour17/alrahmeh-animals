@@ -1,5 +1,9 @@
 # Runtime
 flask==3.1.0
+# SQL Server driver; imported only by db.py (and the test fixtures)
+pymssql==2.4.6
+# Production web server in the container; Flask's own server is for development
+gunicorn==27.0.1
 
 # Test tooling
 pytest==8.3.4

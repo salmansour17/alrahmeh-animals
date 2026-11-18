@@ -8,13 +8,12 @@ depend on the animal domain, so its tests don't either.
 from __future__ import annotations
 
 import re
-import sqlite3
 from datetime import date
-from pathlib import Path
 
 import pytest
 
-from db import SCHEMA_PATH
+from db import DatabaseError, IntegrityError
+from migrate import MIGRATIONS_DIR
 from donations.models import (
     FILS_PER_JOD,
     MAX_DONATION_FILS,
@@ -27,7 +26,7 @@ from donations.models import (
     format_jod,
     parse_amount_jod,
 )
-from donations.repository import SqliteDonationRepository
+from donations.repository import SqlDonationRepository
 from donations.service import (
     AnimalsUnavailable,
     DonationNotFound,
@@ -66,8 +65,8 @@ class UnreachableAnimalDirectory:
 
 
 @pytest.fixture
-def repository(database) -> SqliteDonationRepository:
-    return SqliteDonationRepository(database)
+def repository(database) -> SqlDonationRepository:
+    return SqlDonationRepository(database)
 
 
 @pytest.fixture
@@ -83,9 +82,9 @@ def _give(service: DonationService, amount: str, purpose: DonationPurpose = P.GE
 
 
 def test_purpose_enum_matches_the_schema_check_constraint():
-    schema = Path(SCHEMA_PATH).read_text(encoding="utf-8")
+    schema = (MIGRATIONS_DIR / "001_init.sql").read_text(encoding="utf-8")
     allowed = re.search(r"CHECK \(purpose IN \(([^)]*)\)\)", schema).group(1)
-    in_schema = {value.strip().strip("'") for value in allowed.split(",")}
+    in_schema = {value.strip().removeprefix("N").strip("'") for value in allowed.split(",")}
     assert in_schema == {purpose.value for purpose in DonationPurpose}
 
 
@@ -211,7 +210,7 @@ def test_unknown_donation_raises_not_found(service):
 def test_repository_has_no_way_to_change_or_remove_a_donation():
     mutators = [
         name
-        for name in dir(SqliteDonationRepository)
+        for name in dir(SqlDonationRepository)
         if name.startswith(("update", "delete", "remove", "edit", "set", "change"))
     ]
     assert mutators == []
@@ -219,11 +218,13 @@ def test_repository_has_no_way_to_change_or_remove_a_donation():
 
 @pytest.mark.parametrize(
     "statement",
-    ["UPDATE donations SET amount_fils = 1 WHERE id = ?", "DELETE FROM donations WHERE id = ?"],
+    ["UPDATE donations SET amount_fils = 1 WHERE id = %s", "DELETE FROM donations WHERE id = %s"],
 )
 def test_the_database_itself_refuses_to_change_a_donation(service, database, statement):
+    """The INSTEAD OF trigger makes the statement fail loudly, rather than
+    quietly doing nothing, and the row is untouched."""
     donation = _give(service, "25")
-    with pytest.raises(sqlite3.IntegrityError, match="append-only"):
+    with pytest.raises(DatabaseError, match="append-only"):
         with database.unit_of_work() as connection:
             connection.execute(statement, (donation.id,))
     assert service.get(donation.id) == donation
@@ -486,6 +487,16 @@ def test_a_payment_is_recorded_unverified_while_animals_is_down(cut_off_service,
     assert "Secret Donor" not in caplog.text
 
 
+def test_a_database_error_that_is_not_a_replay_is_raised_and_writes_nothing(paying_service):
+    """Only a duplicate session id means "already recorded". Any other refusal
+    by the database (here the charge's CHECK constraint) must fail the webhook,
+    so Stripe retries it, and must leave no half-written donation behind."""
+    bad_charge = ProviderCharge(session_id="cs_fake_9", amount_minor=0, currency="usd")
+    with pytest.raises(IntegrityError):
+        paying_service.confirm_payment(_paid(charge=bad_charge))
+    assert paying_service.impact().donation_count == 0
+
+
 def test_the_provider_charge_is_kept_beside_the_ledger_row(paying_service, database):
     """The audit trail for the conversion: what Stripe charged, in its own
     currency, next to the fils the ledger recorded."""
@@ -495,4 +506,13 @@ def test_the_provider_charge_is_kept_beside_the_ledger_row(paying_service, datab
             "SELECT p.session_id, p.charged_amount_minor, p.charged_currency, d.amount_fils "
             "FROM stripe_payments p JOIN donations d ON d.id = p.donation_id"
         ).fetchone()
-    assert tuple(row) == ("cs_fake_1", 3_597, "usd", 25_500)
+    assert tuple(row.values()) == ("cs_fake_1", 3_597, "usd", 25_500)
+
+
+def test_a_date_column_that_is_not_a_date_fails_loudly():
+    """The driver returns DATE columns as dates; if that ever changed, mapping
+    a row should fail at once rather than store a string where a date belongs."""
+    from donations.repository import _as_date
+
+    with pytest.raises(TypeError, match="expected a DATE column"):
+        _as_date("2026-09-01")
