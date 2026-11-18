@@ -10,7 +10,6 @@ from __future__ import annotations
 
 from dataclasses import replace
 from datetime import date
-import os
 import re
 from io import BytesIO
 from itertools import product
@@ -18,6 +17,7 @@ from itertools import product
 import pytest
 from PIL import ExifTags, Image
 
+from db import IntegrityError
 from migrate import MIGRATIONS_DIR
 from animals.models import (
     AnimalProfile,
@@ -35,10 +35,9 @@ from animals.models import (
 from animals.photos import (
     MAX_DECODED_PIXELS,
     MAX_PHOTO_SIDE,
-    FileSystemPhotoStore,
     prepare_photo,
 )
-from animals.repository import SqlAnimalRepository, SqlPlacementRepository
+from animals.repository import SqlAnimalRepository, SqlPhotoStore, SqlPlacementRepository
 from animals.service import (
     ALLOWED_TRANSITIONS,
     AdoptionAlreadyApproved,
@@ -733,7 +732,7 @@ def test_decompression_bombs_are_refused(side):
 
 
 class MemoryPhotoStore:
-    """An in-memory PhotoStore. The same contract as FileSystemPhotoStore."""
+    """An in-memory PhotoStore. The same contract as SqlPhotoStore."""
 
     def __init__(self) -> None:
         self._photos: dict[int, tuple[bytes, int]] = {}
@@ -748,15 +747,23 @@ class MemoryPhotoStore:
     def version(self, animal_id: int) -> int | None:
         return self._photos.get(animal_id, (None, None))[1]
 
+    def versions(self, animal_ids: list[int]) -> dict[int, int]:
+        return {i: self._photos[i][1] for i in animal_ids if i in self._photos}
 
-@pytest.fixture(params=["filesystem", "memory"])
-def any_store(request, tmp_path):
-    return FileSystemPhotoStore(tmp_path / "photos") if request.param == "filesystem" else MemoryPhotoStore()
+
+@pytest.fixture(params=["sql", "memory"])
+def any_store(request, service, database):
+    """Each store, with animals 1 and 2 on record (the SQL table's foreign key
+    needs real animals)."""
+    for name in ("One", "Two"):
+        service.admit({"name": name, "species": "Cat", "intake_date": "2026-09-01"})
+    return SqlPhotoStore(database) if request.param == "sql" else MemoryPhotoStore()
 
 
 def test_both_stores_keep_the_same_contract(any_store):
     """Liskov: whichever store the service is given, it behaves the same."""
     assert any_store.load(1) is None and any_store.version(1) is None
+    assert any_store.versions([1, 2]) == {} and any_store.versions([]) == {}
 
     any_store.save(1, b"first")
     first = any_store.version(1)
@@ -765,28 +772,25 @@ def test_both_stores_keep_the_same_contract(any_store):
     assert any_store.load(1) == b"second"
     assert isinstance(any_store.version(1), int) and any_store.version(1) > first
     assert any_store.load(2) is None
+    assert any_store.versions([1, 2, 99]) == {1: any_store.version(1)}
 
 
-def test_a_new_photo_always_gets_a_newer_version_even_within_one_clock_tick(tmp_path):
-    store = FileSystemPhotoStore(tmp_path)
-    store.save(3, b"first")
-    future = store.version(3) + 10_000_000_000  # pretend the first save came later
-    os.utime(tmp_path / "3.webp", ns=(future, future))
+def test_the_sql_store_keeps_one_row_per_animal_and_counts_versions(service, database):
+    animal_id = service.admit({"name": "Loz", "species": "Cat", "intake_date": "2026-09-01"}).id
+    store = SqlPhotoStore(database)
+    for i in range(5):
+        store.save(animal_id, f"photo {i}".encode())
 
-    store.save(3, b"second")
+    with database.unit_of_work() as connection:
+        rows = connection.execute("SELECT animal_id, version FROM animal_photos").fetchall()
+    assert [(r["animal_id"], r["version"]) for r in rows] == [(animal_id, 5)]
+    assert store.load(animal_id) == b"photo 4"
 
-    assert store.version(3) > future
 
-
-def test_the_filesystem_store_writes_whole_files_named_only_by_id(tmp_path):
-    folder = tmp_path / "photos"
-    store = FileSystemPhotoStore(folder)  # creates the folder itself
-    for _ in range(5):
-        store.save(7, b"photo")
-    assert sorted(p.name for p in folder.iterdir()) == ["7.webp"]  # no temp files left behind
-    for bad_id in (0, -1, True, "7", "../7"):
-        with pytest.raises(ValueError):
-            store.save(bad_id, b"x")
+def test_a_photo_cannot_be_stored_for_an_animal_that_does_not_exist(database):
+    """The foreign key backs up the service's own check."""
+    with pytest.raises(IntegrityError):
+        SqlPhotoStore(database).save(999, b"photo")
 
 
 @pytest.fixture

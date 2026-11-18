@@ -33,6 +33,7 @@ ADMIN_PASSWORD = "test-admin-password"
 
 # Children before parents, so foreign keys never block the clean-up.
 TABLES = [
+    "animal_photos",
     "placement_requests",
     "status_changes",
     "medical_records",
@@ -107,13 +108,12 @@ def database(database_url) -> Database:
 
 
 @pytest.fixture
-def config(database, database_url, tmp_path) -> Config:
+def config(database, database_url) -> Config:
     """A Config for this test, pointing at the run's database (already emptied
-    by the `database` fixture). Its photos go to a temporary folder."""
+    by the `database` fixture)."""
     return Config(
         host="0.0.0.0",
         port=8000,
-        data_dir=tmp_path,
         debug=False,
         database_url=database_url,
         admin_password=ADMIN_PASSWORD,

@@ -12,7 +12,6 @@ from __future__ import annotations
 import logging
 import os
 from dataclasses import dataclass, field
-from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -22,8 +21,6 @@ BIND_HOST = "0.0.0.0"
 
 SERVICE = "animals"
 DEFAULT_PORT = 8000
-DEFAULT_DATA_DIR = "data"
-PHOTOS_DIRNAME = "photos"
 
 
 @dataclass(frozen=True)
@@ -32,7 +29,6 @@ class Config:
 
     host: str
     port: int
-    data_dir: Path
     debug: bool
     # Secrets are excluded from repr, so printing or logging a Config never
     # reveals them.
@@ -47,19 +43,12 @@ class Config:
     sample_animals: bool = False
     service: str = SERVICE
 
-    @property
-    def photos_dir(self) -> Path:
-        """Photos live beside the database, so DATA_DIR stays the one folder a
-        deployment has to keep."""
-        return self.data_dir / PHOTOS_DIRNAME
-
 
 def load_config() -> Config:
     """Build a Config from os.environ, falling back to defaults throughout."""
     return Config(
         host=BIND_HOST,
         port=_read_port(),
-        data_dir=Path(os.environ.get("DATA_DIR") or DEFAULT_DATA_DIR).resolve(),
         debug=os.environ.get("FLASK_DEBUG", "0") == "1",
         database_url=os.environ.get("DATABASE_URL") or None,
         # Deliberately no default: unset disables the staff endpoints rather

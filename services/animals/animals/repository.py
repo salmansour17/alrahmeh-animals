@@ -357,6 +357,64 @@ class SqlPlacementRepository:
         return True
 
 
+class SqlPhotoStore:
+    """Implements service.PhotoStore: one row per animal in animal_photos.
+
+    Photos live in the database rather than on disk because a Container App's
+    disk is wiped when it scales to zero (ADR-7). The bytes stored are always
+    the re-encoded WebP from photos.prepare_photo, never the upload itself.
+    """
+
+    def __init__(self, database: Database) -> None:
+        self._database = database
+
+    def save(self, animal_id: int, photo: bytes) -> None:
+        """Replace an animal's photo, moving its version on by one.
+
+        UPDLOCK with SERIALIZABLE holds the key from the UPDATE to the INSERT,
+        so two uploads at once cannot both find no row and both insert. Either
+        upload may win; neither leaves half a photo, because it is one row
+        written in one transaction.
+        """
+        # pymssql sends `bytes` as text, which SQL Server will not put in a
+        # VARBINARY column; a bytearray is sent as binary.
+        binary = bytearray(photo)
+        with self._database.unit_of_work() as connection:
+            connection.execute(
+                "UPDATE animal_photos WITH (UPDLOCK, SERIALIZABLE) "
+                "SET photo = %s, version = version + 1, updated_at = SYSUTCDATETIME() "
+                "WHERE animal_id = %s; "
+                "IF @@ROWCOUNT = 0 "
+                "INSERT INTO animal_photos (animal_id, photo) VALUES (%s, %s)",
+                (binary, animal_id, animal_id, binary),
+            )
+
+    def load(self, animal_id: int) -> bytes | None:
+        with self._database.unit_of_work() as connection:
+            row = connection.execute(
+                "SELECT photo FROM animal_photos WHERE animal_id = %s", (animal_id,)
+            ).fetchone()
+        return bytes(row["photo"]) if row else None
+
+    def version(self, animal_id: int) -> int | None:
+        with self._database.unit_of_work() as connection:
+            row = connection.execute(
+                "SELECT version FROM animal_photos WHERE animal_id = %s", (animal_id,)
+            ).fetchone()
+        return row["version"] if row else None
+
+    def versions(self, animal_ids: list[int]) -> dict[int, int]:
+        """Reads every photo's version (never the photo bytes) in one query
+        and keeps the ones asked for. That avoids building an IN list, which
+        SQL Server caps at about 2,100 parameters."""
+        if not animal_ids:
+            return {}
+        with self._database.unit_of_work() as connection:
+            rows = connection.execute("SELECT animal_id, version FROM animal_photos").fetchall()
+        wanted = set(animal_ids)
+        return {row["animal_id"]: row["version"] for row in rows if row["animal_id"] in wanted}
+
+
 def _move_animal(connection: Any, move: StatusMove) -> bool:
     """The one place an animal's status changes, with its history row.
 

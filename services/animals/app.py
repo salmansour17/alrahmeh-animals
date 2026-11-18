@@ -22,8 +22,8 @@ from flask import Flask, jsonify
 from werkzeug.exceptions import HTTPException
 from werkzeug.routing import IntegerConverter
 
-from animals.photos import MAX_PHOTO_BYTES, FileSystemPhotoStore, prepare_photo
-from animals.repository import SqlAnimalRepository, SqlPlacementRepository
+from animals.photos import MAX_PHOTO_BYTES, prepare_photo
+from animals.repository import SqlAnimalRepository, SqlPhotoStore, SqlPlacementRepository
 from animals.routes import create_animals_blueprint, create_requests_blueprint
 from animals.service import AnimalService, PhotoService, PlacementService
 from config import Config, load_config
@@ -76,17 +76,13 @@ def create_app(config: Config | None = None, database: Database | None = None) -
     # Before any blueprint is registered, so every <int:...> uses the bound.
     app.url_map.converters["int"] = IdConverter
 
-    config.data_dir.mkdir(parents=True, exist_ok=True)
-
     # The composition root: concrete classes are chosen here and nowhere else.
     database = database or Database.from_url(config.database_url, appname=config.service)
     app.config["DATABASE"] = database
 
     animal_service = AnimalService(SqlAnimalRepository(database), today=amman_today)
     placement_service = PlacementService(SqlPlacementRepository(database), animal_service)
-    photo_service = PhotoService(
-        animal_service, FileSystemPhotoStore(config.photos_dir), prepare=prepare_photo
-    )
+    photo_service = PhotoService(animal_service, SqlPhotoStore(database), prepare=prepare_photo)
     app.register_blueprint(create_animals_blueprint(animal_service, placement_service, photo_service))
     app.register_blueprint(create_requests_blueprint(placement_service))
 
