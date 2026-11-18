@@ -1,0 +1,154 @@
+# The whole system on one machine:  docker compose up --build
+#
+# Before the first run, set these in your shell (never in a file in the repo).
+# The three service passwords go inside DATABASE_URL, so use letters and digits
+# only; SQL Server also wants each to be 8+ characters with upper and lower
+# case and a digit.
+#   MSSQL_SA_PASSWORD      SQL Server's admin password, used only by db-init
+#   ANIMALS_DB_PASSWORD    the animals service's own login
+#   DONATIONS_DB_PASSWORD  the donations service's own login
+#   ENQUIRIES_DB_PASSWORD  the enquiries service's own login
+#   ADMIN_PASSWORD         the staff password for the staff portal
+# Optional: STRIPE_SECRET_KEY and STRIPE_WEBHOOK_SECRET (test mode); without
+# them card donations are switched off and everything else works.
+#
+# Then open http://localhost:8080. The services answer on 8001, 8002, 8003.
+#
+# Containers:
+#   sqlserver   one SQL Server holding the three databases
+#   db-init     one-off: runs db/init.sql (databases and logins), then exits
+#   animals, donations, enquiries   the three services, built from their own Dockerfiles
+#   ui-build    one-off: builds the website into the ui-dist volume, then exits
+#   web         stock nginx serving that build; not a service container
+
+name: alrahmeh
+
+services:
+  sqlserver:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_SA_PASSWORD: ${MSSQL_SA_PASSWORD:?set MSSQL_SA_PASSWORD in your shell first}
+    volumes:
+      # The data outlives the container: `docker compose down` keeps it, and
+      # only `docker compose down -v` deletes it.
+      - sqlserver-data:/var/opt/mssql
+    healthcheck:
+      # $$ passes a literal $ through compose, so the password is read inside
+      # the container and never written into the command compose shows.
+      test: ["CMD-SHELL", "/opt/mssql-tools18/bin/sqlcmd -C -S localhost -U sa -P \"$$MSSQL_SA_PASSWORD\" -Q \"SELECT 1\" -b -o /dev/null"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 20s
+
+  db-init:
+    # The same image, for its sqlcmd tool. Runs once and exits.
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    depends_on:
+      sqlserver:
+        condition: service_healthy
+    environment:
+      # sqlcmd takes the login's password from this variable, so it never
+      # appears on the command line (where `docker ps` would show it).
+      SQLCMDPASSWORD: ${MSSQL_SA_PASSWORD:?set MSSQL_SA_PASSWORD in your shell first}
+      ANIMALS_PASSWORD: ${ANIMALS_DB_PASSWORD:?set ANIMALS_DB_PASSWORD in your shell first}
+      DONATIONS_PASSWORD: ${DONATIONS_DB_PASSWORD:?set DONATIONS_DB_PASSWORD in your shell first}
+      ENQUIRIES_PASSWORD: ${ENQUIRIES_DB_PASSWORD:?set ENQUIRIES_DB_PASSWORD in your shell first}
+    volumes:
+      - ./db/init.sql:/db/init.sql:ro
+    # -b stops at the first error, so a failure stops the services below from
+    # starting. sqlcmd reads the three passwords from the environment variables
+    # of the same names, as $(ANIMALS_PASSWORD) and so on in init.sql.
+    entrypoint: ["/opt/mssql-tools18/bin/sqlcmd", "-C", "-S", "sqlserver", "-U", "sa", "-b", "-i", "/db/init.sql"]
+    command: []
+    restart: "no"
+
+  animals:
+    build: ./services/animals
+    depends_on:
+      db-init:
+        condition: service_completed_successfully
+    environment:
+      DATABASE_URL: mssql://animals_app:${ANIMALS_DB_PASSWORD:?set ANIMALS_DB_PASSWORD in your shell first}@sqlserver:1433/animals
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?set ADMIN_PASSWORD in your shell first}
+      CORS_ORIGINS: http://localhost:8080
+    ports:
+      - "8001:8000"
+    healthcheck: &service-health
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  donations:
+    build: ./services/donations
+    depends_on:
+      db-init:
+        condition: service_completed_successfully
+    environment:
+      DATABASE_URL: mssql://donations_app:${DONATIONS_DB_PASSWORD:?set DONATIONS_DB_PASSWORD in your shell first}@sqlserver:1433/donations
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?set ADMIN_PASSWORD in your shell first}
+      CORS_ORIGINS: http://localhost:8080
+      # Found by its compose name; the earmark check calls it (ADR-6). The
+      # donations service does not wait for animals to start: it is built to
+      # work without it.
+      ANIMALS_URL: http://animals:8000
+      ANIMALS_TIMEOUT_S: "2"
+      # Where Stripe sends donors back to: the website.
+      PUBLIC_BASE_URL: http://localhost:8080
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
+      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
+    ports:
+      - "8002:8000"
+    healthcheck: *service-health
+
+  enquiries:
+    build: ./services/enquiries
+    depends_on:
+      db-init:
+        condition: service_completed_successfully
+    environment:
+      DATABASE_URL: mssql://enquiries_app:${ENQUIRIES_DB_PASSWORD:?set ENQUIRIES_DB_PASSWORD in your shell first}@sqlserver:1433/enquiries
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?set ADMIN_PASSWORD in your shell first}
+      CORS_ORIGINS: http://localhost:8080
+    ports:
+      - "8003:8000"
+    healthcheck: *service-health
+
+  ui-build:
+    # One-off: installs the exact versions in package-lock.json, builds the
+    # website, writes the config.js that tells it where the services are, and
+    # exits. node_modules lives in its own volume, so the container never uses
+    # (or overwrites) a node_modules installed on the host for another OS.
+    image: node:22.12.0-alpine
+    working_dir: /ui
+    volumes:
+      - ./ui:/ui
+      - ui-node-modules:/ui/node_modules
+      - ui-dist:/out
+    command:
+      - sh
+      - -c
+      - >-
+        npm ci --no-audit --no-fund &&
+        npm run build -- --outDir /out --emptyOutDir &&
+        printf 'window.ALRAHMEH_CONFIG = {\n  animalsUrl: "http://localhost:8001",\n  donationsUrl: "http://localhost:8002",\n  enquiriesUrl: "http://localhost:8003",\n};\n' > /out/config.js
+    restart: "no"
+
+  web:
+    image: nginx:1.27.3-alpine
+    depends_on:
+      ui-build:
+        condition: service_completed_successfully
+    volumes:
+      - ui-dist:/usr/share/nginx/html:ro
+      - ./ui/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    ports:
+      - "8080:80"
+
+volumes:
+  sqlserver-data:
+  ui-node-modules:
+  ui-dist:
