@@ -11,7 +11,6 @@ from __future__ import annotations
 import logging
 import os
 from dataclasses import dataclass, field
-from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -19,9 +18,8 @@ logger = logging.getLogger(__name__)
 # a container, a process bound to the loopback interface is unreachable.
 BIND_HOST = "0.0.0.0"
 
+SERVICE = "enquiries"
 DEFAULT_PORT = 8000
-DEFAULT_DATA_DIR = "data"
-DATABASE_FILENAME = "enquiries.db"
 
 
 @dataclass(frozen=True)
@@ -30,15 +28,15 @@ class Config:
 
     host: str
     port: int
-    data_dir: Path
     debug: bool
-    # Excluded from repr, so printing or logging a Config never reveals it.
+    # Secrets are excluded from repr, so printing or logging a Config never
+    # reveals them.
+    # mssql://USER:PASSWORD@HOST:PORT/DATABASE[?encrypt=true]; see db.py. No
+    # default: it holds a password, so there is nothing safe to fall back to.
+    database_url: str | None = field(default=None, repr=False)
     # None means the staff endpoints are switched off; see security.py.
     admin_password: str | None = field(default=None, repr=False)
-
-    @property
-    def database_path(self) -> Path:
-        return self.data_dir / DATABASE_FILENAME
+    service: str = SERVICE
 
 
 def load_config() -> Config:
@@ -46,8 +44,8 @@ def load_config() -> Config:
     return Config(
         host=BIND_HOST,
         port=_read_port(),
-        data_dir=Path(os.environ.get("DATA_DIR") or DEFAULT_DATA_DIR).resolve(),
         debug=os.environ.get("FLASK_DEBUG", "0") == "1",
+        database_url=os.environ.get("DATABASE_URL") or None,
         admin_password=os.environ.get("ADMIN_PASSWORD") or None,
     )
 

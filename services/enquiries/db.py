@@ -1,88 +1,239 @@
-"""SQLite connection handling and schema initialisation for this service.
+"""SQL Server connection handling for this service.
 
-This module is the only place in the project that imports `sqlite3`. Domain
-repositories receive a `Database` and ask it for connections, so neither domain
-knows where the file lives or how it is configured. That is the dependency
-inversion the project brief calls for: the domains depend on this small
-interface, not on the driver.
+This module is the only place in the service that imports `pymssql`, the
+SQL Server driver. Repositories receive a `Database` and ask it for a unit of
+work, so no domain code knows which database it talks to or how to reach it.
+Each service keeps its own copy of this file rather than sharing a package, so
+no service depends on another's code (ADR-6).
+
+Where the database is comes from DATABASE_URL, in this form:
+
+    mssql://USER:PASSWORD@HOST:PORT/DATABASE?encrypt=true
+
+`encrypt=true` is required for Azure SQL, which refuses unencrypted
+connections. A password containing @, : or / must be percent-encoded.
 """
 
 from __future__ import annotations
 
 import logging
-import sqlite3
+import time
 from contextlib import contextmanager
-from pathlib import Path
-from typing import Iterator
+from dataclasses import dataclass, field
+from typing import Any, Callable, Iterator
+from urllib.parse import parse_qs, unquote, urlsplit
+
+import pymssql
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_PATH = Path(__file__).with_name("schema.sql")
+# Re-exported so repositories and tests can catch driver errors without
+# importing the driver themselves.
+DatabaseError = pymssql.DatabaseError
+IntegrityError = pymssql.IntegrityError
+
+DEFAULT_PORT = 1433
+
+# Error numbers that mean "the database is not ready yet", so trying again
+# shortly will probably work. Anything else (a wrong password, a missing
+# database) is a real fault and is raised at once.
+#   40613  Azure SQL: database not currently available (resuming from pause)
+#   40501  Azure SQL: the service is busy
+#   40197  Azure SQL: the service hit an error processing the request
+#   20002  pymssql (FreeTDS): connection failed
+#   20003  pymssql (FreeTDS): connection timed out
+#   20009  pymssql (FreeTDS): server unavailable or does not exist yet
+RETRYABLE_ERRORS = frozenset({40613, 40501, 40197, 20002, 20003, 20009})
+
+# A paused Azure SQL database takes up to about a minute to resume. Waiting
+# 1, 2, 4, 8, 15, 15 and 15 seconds between eight attempts covers 60 seconds
+# before giving up.
+DEFAULT_ATTEMPTS = 8
+DEFAULT_FIRST_DELAY_S = 1.0
+DEFAULT_MAX_DELAY_S = 15.0
+LOGIN_TIMEOUT_S = 10
+QUERY_TIMEOUT_S = 30
+
+
+@dataclass(frozen=True)
+class ConnectionSettings:
+    """Where the database is and how to log in, parsed from DATABASE_URL."""
+
+    host: str
+    port: int
+    user: str
+    database: str
+    encrypt: bool = False
+    # Excluded from repr, so a logged or printed settings object never shows it.
+    password: str = field(default="", repr=False)
+
+    @classmethod
+    def from_url(cls, url: str) -> "ConnectionSettings":
+        """Parse mssql://USER:PASSWORD@HOST:PORT/DATABASE?encrypt=true.
+
+        Raises ValueError naming the part that is wrong, never the URL itself,
+        because the URL contains the password.
+        """
+        parts = urlsplit(url)
+        if parts.scheme not in ("mssql", "mssql+pymssql"):
+            raise ValueError("DATABASE_URL must start with mssql://")
+        if not parts.hostname:
+            raise ValueError("DATABASE_URL has no host")
+        if not parts.username:
+            raise ValueError("DATABASE_URL has no user")
+        database = parts.path.lstrip("/")
+        if not database:
+            raise ValueError("DATABASE_URL has no database name")
+        try:
+            port = parts.port or DEFAULT_PORT
+        except ValueError:
+            raise ValueError("DATABASE_URL has an invalid port") from None
+        encrypt = parse_qs(parts.query).get("encrypt", ["false"])[-1].lower() in ("true", "yes", "1")
+        return cls(
+            host=parts.hostname,
+            port=port,
+            user=unquote(parts.username),
+            database=unquote(database),
+            encrypt=encrypt,
+            password=unquote(parts.password or ""),
+        )
+
+
+def _error_number(error: Exception) -> int | None:
+    """pymssql puts the SQL Server or FreeTDS error number first in args."""
+    if error.args and isinstance(error.args[0], int):
+        return error.args[0]
+    return None
+
+
+class Connection:
+    """A thin wrapper so repositories write `connection.execute(sql, params)`
+    and read rows as dictionaries, whichever driver is underneath."""
+
+    def __init__(self, raw: Any) -> None:
+        self._raw = raw
+
+    def execute(self, sql: str, params: tuple = ()) -> Any:
+        """Run one statement or batch with %s placeholders and return its
+        cursor. Values are always sent as parameters, never pasted into the
+        SQL text, so a value from a request can never become part of a query."""
+        cursor = self._raw.cursor(as_dict=True)
+        if params:
+            cursor.execute(sql, params)
+        else:
+            # Without parameters the driver does no % substitution, so the SQL
+            # is sent exactly as written.
+            cursor.execute(sql)
+        return cursor
 
 
 class Database:
-    """Owns one SQLite file and hands out configured connections."""
+    """Owns the connection settings and hands out transactions."""
 
-    def __init__(self, path: Path) -> None:
-        self._path = Path(path)
+    def __init__(
+        self,
+        settings: ConnectionSettings,
+        *,
+        appname: str = "alrahmeh",
+        attempts: int = DEFAULT_ATTEMPTS,
+        first_delay_s: float = DEFAULT_FIRST_DELAY_S,
+        max_delay_s: float = DEFAULT_MAX_DELAY_S,
+        connect: Callable[..., Any] = pymssql.connect,
+        sleep: Callable[[float], None] = time.sleep,
+    ) -> None:
+        self._settings = settings
+        self._appname = appname
+        self._attempts = attempts
+        self._first_delay_s = first_delay_s
+        self._max_delay_s = max_delay_s
+        # Injected so tests can simulate a database that is waking up without
+        # waiting for real time to pass.
+        self._connect = connect
+        self._sleep = sleep
+
+    @classmethod
+    def from_url(cls, url: str | None, **options: Any) -> "Database":
+        """Build from DATABASE_URL. Unset is an error, not a default: the URL
+        holds a password, so there is no value it could safely fall back to."""
+        if not url:
+            raise ValueError("DATABASE_URL is not set")
+        return cls(ConnectionSettings.from_url(url), **options)
 
     @property
-    def path(self) -> Path:
-        return self._path
+    def name(self) -> str:
+        return self._settings.database
 
-    def connect(self) -> sqlite3.Connection:
-        """Open a connection with the settings every caller needs.
+    def connect(self) -> Any:
+        """Open a connection, retrying with backoff while the database wakes up.
 
-        A new connection per unit of work rather than one shared connection:
-        SQLite connections are not safe to use from multiple threads, and Flask
-        serves requests on more than one thread.
+        A new connection per unit of work rather than one shared connection: a
+        connection cannot safely serve two requests at once, and the server
+        handles requests on several threads.
         """
-        connection = sqlite3.connect(self._path)
-        # Return mapping-style rows so repositories can read columns by name
-        # instead of by position, which keeps them readable as the schema grows.
-        connection.row_factory = sqlite3.Row
-        # SQLite disables foreign key enforcement per connection by default, so
-        # medical_records and placement_requests would not actually cascade
-        # without this.
-        connection.execute("PRAGMA foreign_keys = ON")
-        return connection
+        delay = self._first_delay_s
+        for attempt in range(1, self._attempts + 1):
+            try:
+                return self._open()
+            except pymssql.Error as error:
+                number = _error_number(error)
+                if number not in RETRYABLE_ERRORS or attempt == self._attempts:
+                    raise
+                # The error number only: the message can include the host and
+                # user, and none of it helps more than the number does.
+                logger.warning(
+                    "Database %s not ready (error %s), attempt %d of %d; retrying in %.0f s",
+                    self._settings.database,
+                    number,
+                    attempt,
+                    self._attempts,
+                    delay,
+                )
+                self._sleep(delay)
+                delay = min(delay * 2, self._max_delay_s)
+        raise AssertionError("unreachable")  # the loop always returns or raises
+
+    def _open(self) -> Any:
+        settings = self._settings
+        options: dict[str, Any] = {
+            "server": settings.host,
+            "port": str(settings.port),
+            "user": settings.user,
+            "password": settings.password,
+            "database": settings.database,
+            "login_timeout": LOGIN_TIMEOUT_S,
+            "timeout": QUERY_TIMEOUT_S,
+            "charset": "UTF-8",
+            "tds_version": "7.4",
+            "appname": self._appname,
+            "autocommit": False,
+        }
+        if settings.encrypt:
+            options["encryption"] = "require"
+        return self._connect(**options)
 
     @contextmanager
-    def unit_of_work(self) -> Iterator[sqlite3.Connection]:
+    def unit_of_work(self) -> Iterator[Connection]:
         """Run a block inside one transaction, then commit or roll back.
 
         Committing on the way out and rolling back on an exception means a
         half-applied write cannot survive an error, and callers never have to
         remember to commit.
         """
-        connection = self.connect()
+        raw = self.connect()
         try:
-            yield connection
-            connection.commit()
+            yield Connection(raw)
+            raw.commit()
         except Exception:
-            connection.rollback()
+            raw.rollback()
             raise
         finally:
-            connection.close()
-
-    def initialise(self) -> None:
-        """Apply schema.sql. Safe to run on every startup.
-
-        Every statement in the schema is CREATE ... IF NOT EXISTS, so this is
-        idempotent: an empty data directory and an existing database take the
-        same path. That is what removes the need for a migration step at boot.
-        """
-        self._path.parent.mkdir(parents=True, exist_ok=True)
-        schema = SCHEMA_PATH.read_text(encoding="utf-8")
-        with self.unit_of_work() as connection:
-            connection.executescript(schema)
-        logger.info("Schema applied to %s", self._path)
+            raw.close()
 
     def table_names(self) -> list[str]:
-        """Tables currently present. Used by the health endpoint and by tests."""
+        """Tables currently present in this service's database."""
         with self.unit_of_work() as connection:
             rows = connection.execute(
-                "SELECT name FROM sqlite_master WHERE type = 'table' "
-                "AND name NOT LIKE 'sqlite_%' ORDER BY name"
+                "SELECT TABLE_NAME AS name FROM INFORMATION_SCHEMA.TABLES "
+                "WHERE TABLE_TYPE = 'BASE TABLE' ORDER BY TABLE_NAME"
             ).fetchall()
         return [row["name"] for row in rows]

@@ -9,9 +9,9 @@ from dataclasses import replace
 import pytest
 
 from app import create_app
-from db import SCHEMA_PATH
+from migrate import MIGRATIONS_DIR
 from enquiries.models import Topic, ValidationError
-from enquiries.repository import SqliteEnquiryRepository
+from enquiries.repository import SqlEnquiryRepository
 from enquiries.service import EnquiryNotFound, EnquiryService
 from tests.conftest import ADMIN_PASSWORD
 
@@ -30,16 +30,16 @@ PRIVATE = ("Secret Sender", "secret.sender@example.org", "Saturdays")
 
 @pytest.fixture
 def enquiries(database) -> EnquiryService:
-    return EnquiryService(SqliteEnquiryRepository(database))
+    return EnquiryService(SqlEnquiryRepository(database))
 
 
 # --- the service -------------------------------------------------------------
 
 
 def test_topic_enum_matches_the_schema_check_constraint():
-    schema = SCHEMA_PATH.read_text(encoding="utf-8")
+    schema = (MIGRATIONS_DIR / "001_init.sql").read_text(encoding="utf-8")
     allowed = re.search(r"CHECK \(topic IN \(([^)]*)\)\)", schema).group(1)
-    assert {v.strip().strip("'") for v in allowed.split(",")} == {t.value for t in Topic}
+    assert {v.strip().removeprefix("N").strip("'") for v in allowed.split(",")} == {t.value for t in Topic}
 
 
 def test_a_message_is_stored_unhandled_and_listed_newest_first(enquiries):
