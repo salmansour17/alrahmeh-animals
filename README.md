@@ -29,72 +29,118 @@ service asks the animals service whether an earmarked animal exists.
 
 ## Layout
 
-| Folder | What it is | Default dev port |
+| Folder | What it is | Port in Compose |
 |---|---|---|
 | `services/animals/` | Animal intake, the placement lifecycle, adoption and foster requests, offline adoptions, photos | 8001 |
 | `services/donations/` | The donation ledger, Stripe card payments, impact figures | 8002 |
 | `services/enquiries/` | Contact and volunteer messages | 8003 |
-| `ui/` | The website: React, built by Vite into static files | 5173 |
+| `ui/` | The website: React, built by Vite into static files | 8080 |
+| `db/init.sql` | Local setup: one database and one login per service | |
 
-Each service has its own `requirements.txt`, and `ui/` has its own
-`package.json`; there is no manifest at the repository root.
+Each service has its own `requirements.txt`, `Dockerfile` and database, and
+`ui/` has its own `package.json`; there is no manifest at the repository root.
+Each service's tables are defined by the numbered files in its `migrations/`
+folder (ADR-7).
 
 ## Requirements
 
-- Python 3.11 or newer
-- Node.js 20 or newer, to build or preview the website
+- Docker Desktop, for the whole system
+- Python 3.11 or newer and Node.js 20 or newer, only to run a service or the
+  website outside Docker
 
-## Running locally
+## Running locally with Docker Compose
 
-Each service is a separate process. Install its dependencies and start it from
-its own folder, on its own port (every service defaults to 8000 on its own, so
-locally they need different ones):
+The whole system starts with one command. First set five passwords in your
+shell; they are never written to a file in the repository, and Compose stops
+with a message naming any that is missing. The three service passwords go
+inside each service's `DATABASE_URL`, so use **letters and digits only**, 8 or
+more characters with upper and lower case and a digit (SQL Server's rule).
 
-```bash
-python -m venv .venv
-source .venv/bin/activate        # Windows: .venv\Scripts\activate
-pip install -r services/animals/requirements.txt -r services/donations/requirements.txt -r services/enquiries/requirements.txt
+PowerShell (each is typed at a prompt, so it is not saved in your history):
 
-cd services/animals   && PORT=8001 python app.py      # terminal 1
-cd services/donations && PORT=8002 ANIMALS_URL=http://localhost:8001 python app.py   # terminal 2
-cd services/enquiries && PORT=8003 python app.py      # terminal 3
-cd ui && npm ci && npm run dev                        # terminal 4: http://localhost:5173
+```powershell
+$env:MSSQL_SA_PASSWORD     = Read-Host "SQL Server admin password"
+$env:ANIMALS_DB_PASSWORD   = Read-Host "animals service database password"
+$env:DONATIONS_DB_PASSWORD = Read-Host "donations service database password"
+$env:ENQUIRIES_DB_PASSWORD = Read-Host "enquiries service database password"
+$env:ADMIN_PASSWORD        = Read-Host "staff portal password"
+docker compose up --build
 ```
 
-(On Windows PowerShell, set a variable first, e.g. `$env:PORT=8001`, then run
-`python app.py`.)
+Then open <http://localhost:8080>. What starts, in order:
 
-The website's dev server forwards each `/api/...` call to the service that owns
-it (`ui/vite.config.js`). Each service applies its schema on startup; there is
-no migration step or prompt.
+1. `sqlserver`, one SQL Server for the three databases (its data is kept in a
+   Docker volume between runs);
+2. `db-init`, which runs `db/init.sql` once and exits: three databases and
+   three logins, each login allowed into its own database only;
+3. the three services, each built from its own Dockerfile. Each container runs
+   its migrations (`python migrate.py`), then for animals the sample animals,
+   then gunicorn; if the migrations fail, the web server never starts;
+4. `ui-build`, which builds the website with the service addresses in
+   `config.js` and exits, and `web`, a stock nginx serving that build.
 
-Running a single service works the same way: start just that one. The donations
-service keeps working with the animals service stopped; only a staff donation
-earmarked for an animal is refused, with a 503 asking to retry (ADR-6).
+Every `docker compose` command, even `ps` or `logs`, needs the five variables
+set in that shell. `docker compose down` stops everything and keeps the data;
+`docker compose down -v` also deletes it. Card donations stay off unless
+`STRIPE_SECRET_KEY` and `STRIPE_WEBHOOK_SECRET` are set too.
+
+To see partial failure, stop one service: `docker compose stop animals`. The
+website then shows "Could not reach the server" on the animal pages and a dash
+for the adoption counter, while the donation figures, the donate page and the
+contact form keep working. `docker compose start animals` brings it back.
+Screenshots are in `docs/evidence/`.
+
+## Running a single service without Docker
+
+A service needs a SQL Server database. With the Compose stack running, the
+databases are there but not published to your machine; the simplest way is a
+separate SQL Server for development:
+
+```powershell
+docker run -d --name alrahmeh-sql -e ACCEPT_EULA=Y -e MSSQL_SA_PASSWORD=$env:MSSQL_SA_PASSWORD -p 1434:1433 mcr.microsoft.com/mssql/server:2022-latest
+```
+
+Create a database in it (any name), then, from the service's folder:
+
+```powershell
+pip install -r requirements.txt
+$env:DATABASE_URL = "mssql://sa:$([uri]::EscapeDataString($env:MSSQL_SA_PASSWORD))@localhost:1434/animals_dev"
+$env:PORT = 8001
+python app.py
+```
+
+`python app.py` applies the migrations, adds the sample animals (animals only)
+and serves with Flask's development server. For the website on its own,
+`cd ui && npm ci && npm run dev` serves it on <http://localhost:5173> and
+forwards each `/api/...` call to the service on 8001, 8002 or 8003
+(`ui/vite.config.js`).
+
+The donations service keeps working with the animals service stopped; only a
+staff donation earmarked for an animal is refused, with a 503 asking to retry
+(ADR-6).
 
 ## Configuration
 
-Every setting is read from the environment at startup, and every one has a
-default. No `.env` file is required. `PORT`, `DATA_DIR`, `FLASK_DEBUG` and
-`ADMIN_PASSWORD` are read by every service; the rest by the one named.
+Every setting is read from the environment at startup. No `.env` file is
+required. `PORT`, `DATABASE_URL`, `CORS_ORIGINS`, `FLASK_DEBUG`, `WEB_WORKERS`
+and `ADMIN_PASSWORD` are read by every service; the rest by the one named.
 
 | Variable | Default | Purpose |
 |---|---|---|
 | `PORT` | `8000` | TCP port to listen on. Values that are not valid port numbers are ignored with a warning. |
-| `DATA_DIR` | `./data` | Directory holding the service's SQLite file (`animals.db`, `donations.db` or `enquiries.db`), and for animals the `photos/` folder. Created on startup if absent. |
+| `DATABASE_URL` | _(none; required)_ | The service's own database: `mssql://USER:PASSWORD@HOST:PORT/DATABASE`, with `?encrypt=true` on Azure. A secret, so it has no default; a service will not start without it. |
+| `CORS_ORIGINS` | _(none)_ | Website origins allowed to call the service from a browser, comma separated, e.g. `http://localhost:8080`. No wildcard; unset allows none. |
+| `WEB_WORKERS` | `2` | gunicorn worker processes in the container. |
 | `SAMPLE_ANIMALS` | `1` | _(animals)_ When the database has no animals, add six sample animals at startup (via the same service as a staff intake) so the animal pages have something to show. `0` starts empty. Never adds to a database that already has animals. |
-| `FLASK_DEBUG` | `0` | Set to `1` for the Flask reloader and tracebacks. Leave unset in deployment. |
+| `FLASK_DEBUG` | `0` | Set to `1` for the Flask reloader and tracebacks in development. |
 | `ADMIN_PASSWORD` | _(unset)_ | Shared password for the staff-only endpoints. **Unset disables them**, returning 503 rather than allowing access. |
 | `STRIPE_SECRET_KEY` | _(unset)_ | _(donations)_ Stripe **test-mode** secret key (`sk_test_…`). Unset, or a live `sk_live_…` key, disables card donations (503); the rest of the site keeps working. |
-| `STRIPE_WEBHOOK_SECRET` | _(unset)_ | Signing secret (`whsec_…`) used to verify that webhook calls really come from Stripe. Unset disables card donations. |
-| `CLIQ_ALIAS` | _(unset)_ | The rescue's CliQ alias, shown on the donate page as a way to give without a card. Unset hides it. |
-| `BANK_NAME`, `BANK_IBAN`, `BANK_ACCOUNT_NAME` | _(unset)_ | Bank-transfer details for the donate page. Shown only when at least the IBAN and account name are set. Staff record these donations afterwards, like cash. |
-| `ANIMALS_URL` | `http://animals:8000` | _(donations)_ Where the animals service answers. The default is its Docker Compose name; locally, `http://localhost:8001`. |
+| `STRIPE_WEBHOOK_SECRET` | _(unset)_ | _(donations)_ Signing secret (`whsec_…`) used to verify that webhook calls really come from Stripe. Unset disables card donations. |
+| `CLIQ_ALIAS` | _(unset)_ | _(donations)_ The rescue's CliQ alias, shown on the donate page as a way to give without a card. Unset hides it. |
+| `BANK_NAME`, `BANK_IBAN`, `BANK_ACCOUNT_NAME` | _(unset)_ | _(donations)_ Bank-transfer details for the donate page. Shown only when at least the IBAN and account name are set. |
+| `ANIMALS_URL` | `http://animals:8000` | _(donations)_ Where the animals service answers. The default is its Docker Compose name; outside Compose, e.g. `http://localhost:8001`. |
 | `ANIMALS_TIMEOUT_S` | `2` | _(donations)_ Seconds before a call to the animals service is given up. Values outside (0, 60] fall back to the default. |
-| `PUBLIC_BASE_URL` | `http://localhost:5173` | _(donations)_ The website's origin, e.g. `https://donate.example.org`. Donors return here after paying. Must be a bare `http(s)://host[:port]`; anything else disables card donations. |
-
-Each service's SQLite database lives at **`${DATA_DIR}/<service>.db`**. SQLite
-is temporary: the services move to SQL Server, one database each, next.
+| `PUBLIC_BASE_URL` | `http://localhost:5173` | _(donations)_ The website's origin. Donors return here after paying. Must be a bare `http(s)://host[:port]`; anything else disables card donations. |
 
 ## Card donations (Stripe test mode)
 
@@ -130,10 +176,13 @@ USD 35.97 test payment recorded once as 25.503 JOD, a resent webhook answered
    ```powershell
    $env:STRIPE_SECRET_KEY     = Read-Host "Paste sk_test key"
    $env:STRIPE_WEBHOOK_SECRET = Read-Host "Paste the whsec secret"
-   cd services/donations; $env:PORT = 8002; $env:ANIMALS_URL = "http://localhost:8001"; python app.py
+   docker compose up --build
    ```
 
-4. Open `http://localhost:5173/donate`, choose an amount and continue. Stripe's
+   With both set, Compose passes them to the donations service. The CLI's
+   `--forward-to` port 8002 is the donations service's port in Compose.
+
+4. Open `http://localhost:8080/donate`, choose an amount and continue. Stripe's
    sandbox checkout opens; pay with card `4242 4242 4242 4242`, any future
    expiry date and any CVC. You return to the thank-you page, the CLI shows the
    confirmation with a 200, and the homepage total rises.
@@ -183,7 +232,7 @@ reads the password from the environment, so it never appears in a command:
 
 ```powershell
 $auth = @{ Authorization = "Basic " + [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes("staff:$env:ADMIN_PASSWORD")) }
-$api = "http://localhost:5173/api"   # the website dev server forwards each call to its service
+$api = "http://localhost:5173/api"   # with `npm run dev`, which forwards each call to its service; under Compose, use each service's own port (8001 animals and requests, 8002 donations, 8003 enquiries)
 function Send($method, $path, $body) { Invoke-RestMethod -Method $method "$api$path" -Headers $auth -ContentType "application/json" -Body ($body | ConvertTo-Json) }
 ```
 
@@ -224,29 +273,35 @@ PREV and NEXT. The logo is the rescue's own, recoloured blue.
 
 ## Tests
 
-Each service is tested on its own, from its own folder:
+Each service is tested on its own, from its own folder, against a real SQL
+Server. Each run creates its own database with a random name, applies the
+service's migrations to it, empties the tables before every test, and drops
+the database at the end, so no test touches a real database. Point the tests
+at a SQL Server with `MSSQL_SA_PASSWORD` (for one on `localhost:1433`) or
+`TEST_SQLSERVER_URL` (any host and port):
 
-```bash
-cd services/animals   && pytest --cov --cov-report=term-missing
-cd services/donations && pytest --cov --cov-report=term-missing
-cd services/enquiries && pytest --cov --cov-report=term-missing
+```powershell
+$env:TEST_SQLSERVER_URL = "mssql://sa:$([uri]::EscapeDataString($env:MSSQL_SA_PASSWORD))@localhost:1434/master"
+cd services/animals;   pytest --cov --cov-report=term-missing
+cd ../donations;       pytest --cov --cov-report=term-missing
+cd ../enquiries;       pytest --cov --cov-report=term-missing
 ```
 
 Coverage is measured on each service's domain package and excludes Flask
-blueprints (`routes.py`), which are routing glue rather than business logic;
-each service's `.coveragerc` says so. The donations tests check the call to the
-animals service over real HTTP, against a stand-in served on a random local
-port (`tests/animals_stub.py`): known and unknown animals, a 500, a slow answer
-cut off at the timeout, and a stopped service.
+blueprints (`routes.py`), which are routing glue rather than business logic.
+Besides the domain rules, each service tests its migration runner (a second
+run applies nothing, an edited migration stops the start, a failed migration
+leaves no trace, no migration drops anything), the connection retry, and CORS.
+The donations tests check the call to the animals service over real HTTP,
+against a stand-in served on a random local port (`tests/animals_stub.py`).
 
-Coverage after the split, measured 2026-11-17:
+Coverage on SQL Server, measured 2026-11-18:
 
-```
-animals    animals/models.py 100%  photos.py 100%  repository.py 100%  service.py 100%    205 passed
-donations  animals_client.py 100%  models.py 100%  payments.py 100%
-           repository.py 100%  service.py 100%                                         195 passed
-enquiries  models.py 100%  repository.py 100%  service.py 100%                          41 passed
-```
+| Service | Tests | Domain coverage |
+|---|---|---|
+| animals | 243 passed | 100% |
+| donations | 234 passed | 100% |
+| enquiries | 78 passed | 100% |
 
 ### Clean-clone check of the Assignment 1 monolith (2026-10-04)
 
