@@ -13,7 +13,6 @@ from datetime import date
 import pytest
 
 from db import DatabaseError, IntegrityError
-from migrate import MIGRATIONS_DIR
 from donations.models import (
     FILS_PER_JOD,
     MAX_DONATION_FILS,
@@ -36,6 +35,7 @@ from donations.service import (
     UnknownEarmarkedAnimal,
     WebhookOutcome,
 )
+from migrate import MIGRATIONS_DIR
 
 P = DonationPurpose
 TODAY = date(2026, 9, 30)
@@ -467,7 +467,12 @@ def test_staff_gifts_without_an_earmark_never_ask_animals(cut_off_service):
 def test_a_donor_checkout_goes_ahead_unverified_while_animals_is_down(cut_off_service, gateway, caplog):
     """A donor is never turned away because another service is down."""
     session = cut_off_service.start_checkout(
-        {"amount_jod": "5", "purpose": "medical_fund", "earmarked_animal_id": KNOWN_ANIMAL, "donor_name": "Secret Donor"}
+        {
+            "amount_jod": "5",
+            "purpose": "medical_fund",
+            "earmarked_animal_id": KNOWN_ANIMAL,
+            "donor_name": "Secret Donor",
+        }
     )
 
     assert session.url == "https://pay.example/fake"

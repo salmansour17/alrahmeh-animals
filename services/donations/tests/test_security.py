@@ -18,7 +18,7 @@ from tests.conftest import ADMIN_PASSWORD
 
 def _basic_auth(password: str, username: str = "staff") -> dict[str, str]:
     """Build an HTTP Basic Authorization header."""
-    raw = f"{username}:{password}".encode("utf-8")
+    raw = f"{username}:{password}".encode()
     return {"Authorization": "Basic " + base64.b64encode(raw).decode("ascii")}
 
 

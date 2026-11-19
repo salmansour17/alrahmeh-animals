@@ -8,3 +8,5 @@ gunicorn==27.0.1
 # Test tooling
 pytest==8.3.4
 pytest-cov==6.0.0
+# Linter; run as `ruff check .` from this folder (config in ruff.toml)
+ruff==0.14.5

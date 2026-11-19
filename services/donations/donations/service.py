@@ -9,9 +9,10 @@ create_app supplies the concrete objects.
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from datetime import date
 from enum import StrEnum
-from typing import Any, Callable, Protocol
+from typing import Any, Protocol
 
 from donations.models import (
     MAX_DONATION_FILS,

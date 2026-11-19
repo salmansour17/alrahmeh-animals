@@ -14,7 +14,6 @@ from __future__ import annotations
 from datetime import date, datetime
 from typing import Any
 
-from db import Database
 from animals.models import (
     Animal,
     AnimalProfile,
@@ -32,6 +31,7 @@ from animals.models import (
     StatusChange,
     StatusMove,
 )
+from db import Database
 
 
 class _Conflict(Exception):
@@ -71,7 +71,8 @@ class SqlAnimalRepository:
     def get(self, animal_id: int) -> Animal | None:
         with self._database.unit_of_work() as connection:
             row = connection.execute(
-                "SELECT id, name, species, breed, date_of_intake, status, notes FROM animals WHERE id = %s", (animal_id,)
+                "SELECT id, name, species, breed, date_of_intake, status, notes FROM animals WHERE id = %s",
+                (animal_id,),
             ).fetchone()
         return _to_animal(row) if row else None
 
@@ -83,7 +84,8 @@ class SqlAnimalRepository:
                 ).fetchall()
             else:
                 rows = connection.execute(
-                    "SELECT id, name, species, breed, date_of_intake, status, notes FROM animals WHERE status = %s ORDER BY id",
+                    "SELECT id, name, species, breed, date_of_intake, status, notes FROM animals "
+                    "WHERE status = %s ORDER BY id",
                     (status.value,),
                 ).fetchall()
         return [_to_animal(row) for row in rows]

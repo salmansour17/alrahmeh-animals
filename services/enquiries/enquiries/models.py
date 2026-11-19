@@ -7,9 +7,10 @@ forbids, so a few small functions are duplicated instead.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Any, Mapping
+from typing import Any
 
 NAME_MAX = 120
 EMAIL_MAX = 254  # the longest address the email standards allow

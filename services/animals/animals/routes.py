@@ -16,13 +16,13 @@ from flask import Blueprint, Response, jsonify, request
 from animals.models import (
     Animal,
     AnimalProfile,
-    age_text,
-    weight_text,
     MedicalRecord,
     OfflineAdoption,
     PlacementRequest,
     StatusChange,
     ValidationError,
+    age_text,
+    weight_text,
 )
 from animals.photos import MAX_PHOTO_BYTES
 from animals.service import (

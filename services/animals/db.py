@@ -18,9 +18,10 @@ from __future__ import annotations
 
 import logging
 import time
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from typing import Any, Callable, Iterator
+from typing import Any
 from urllib.parse import parse_qs, unquote, urlsplit
 
 import pymssql
@@ -68,7 +69,7 @@ class ConnectionSettings:
     password: str = field(default="", repr=False)
 
     @classmethod
-    def from_url(cls, url: str) -> "ConnectionSettings":
+    def from_url(cls, url: str) -> ConnectionSettings:
         """Parse mssql://USER:PASSWORD@HOST:PORT/DATABASE?encrypt=true.
 
         Raises ValueError naming the part that is wrong, never the URL itself,
@@ -152,7 +153,7 @@ class Database:
         self._sleep = sleep
 
     @classmethod
-    def from_url(cls, url: str | None, **options: Any) -> "Database":
+    def from_url(cls, url: str | None, **options: Any) -> Database:
         """Build from DATABASE_URL. Unset is an error, not a default: the URL
         holds a password, so there is no value it could safely fall back to."""
         if not url:

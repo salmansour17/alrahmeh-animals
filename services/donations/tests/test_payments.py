@@ -248,7 +248,9 @@ def test_every_allowed_card_amount_survives_the_round_trip_within_limits():
     """Whatever a donor may ask for, the amount recorded after the trip
     through US cents stays inside the ledger's limits and within half a cent
     (about 3.5 fils) of the request."""
-    for fils in list(range(MIN_CHECKOUT_FILS, MIN_CHECKOUT_FILS + 2_000)) + [MAX_DONATION_FILS - n for n in range(2_000)]:
+    lowest = list(range(MIN_CHECKOUT_FILS, MIN_CHECKOUT_FILS + 2_000))
+    highest = [MAX_DONATION_FILS - n for n in range(2_000)]
+    for fils in lowest + highest:
         recorded = cents_to_fils(fils_to_cents(fils))
         assert MIN_CHECKOUT_FILS <= recorded <= MAX_DONATION_FILS
         assert abs(recorded - fils) <= 4

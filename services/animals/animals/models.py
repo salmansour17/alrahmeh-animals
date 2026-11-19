@@ -13,10 +13,11 @@ the raw JSON through untouched; they never check a field themselves.
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import date
 from enum import StrEnum
-from typing import Any, Mapping
+from typing import Any
 
 NAME_MAX = 80
 SPECIES_MAX = 40
