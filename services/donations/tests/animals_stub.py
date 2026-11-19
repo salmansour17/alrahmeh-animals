@@ -61,7 +61,7 @@ class AnimalsStub:
         self.url = f"http://127.0.0.1:{self._server.server_address[1]}"
         self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)
 
-    def __enter__(self) -> "AnimalsStub":
+    def __enter__(self) -> AnimalsStub:
         self._thread.start()
         return self
 

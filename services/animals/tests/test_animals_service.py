@@ -8,22 +8,18 @@ whose behaviour could quietly drift from the real one.
 
 from __future__ import annotations
 
+import re
 from dataclasses import replace
 from datetime import date
-import re
 from io import BytesIO
 from itertools import product
 
 import pytest
 from PIL import ExifTags, Image
 
-from db import IntegrityError
-from migrate import MIGRATIONS_DIR
 from animals.models import (
     AnimalProfile,
     MedicalRecordType,
-    age_text,
-    weight_text,
     NewAnimal,
     NewPlacementRequest,
     PlacementStatus,
@@ -31,6 +27,8 @@ from animals.models import (
     RequestOutcome,
     StatusMove,
     ValidationError,
+    age_text,
+    weight_text,
 )
 from animals.photos import (
     MAX_DECODED_PIXELS,
@@ -55,6 +53,8 @@ from animals.service import (
     TransitionConflict,
     UnsupportedPhotoType,
 )
+from db import IntegrityError
+from migrate import MIGRATIONS_DIR
 
 S = PlacementStatus
 TODAY = date(2026, 9, 29)

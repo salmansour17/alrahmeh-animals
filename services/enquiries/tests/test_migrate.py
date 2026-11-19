@@ -67,7 +67,11 @@ def test_a_new_migration_keeps_the_rows_already_there(scratch_url, tmp_path):
     with database.unit_of_work() as connection:
         connection.execute("INSERT INTO things (id) VALUES (1), (2)")
 
-    _write(tmp_path, "002_label.sql", "ALTER TABLE things ADD label NVARCHAR(20) NOT NULL CONSTRAINT df_things_label DEFAULT N'new';")
+    _write(
+        tmp_path,
+        "002_label.sql",
+        "ALTER TABLE things ADD label NVARCHAR(20) NOT NULL CONSTRAINT df_things_label DEFAULT N'new';",
+    )
     assert apply_migrations(database, tmp_path) == ["002_label.sql"]
 
     with database.unit_of_work() as connection:

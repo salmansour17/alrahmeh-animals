@@ -1,0 +1,20 @@
+# Lint settings for this service: `ruff check .` from this folder.
+# A config file only; the service's one dependency manifest is requirements.txt.
+
+# The oldest Python the services support (the images run 3.13).
+target-version = "py311"
+# The code has been written to about 120 columns since Assignment 1. Ruff's
+# default of 88 would flag nearly 200 existing lines that are not hard to read;
+# 120 still catches the lines that are.
+line-length = 120
+
+[lint]
+# E, W: pycodestyle errors and warnings. F: pyflakes (unused imports, undefined
+# names). I: import order. B: bugbear (likely bugs). UP: older syntax that has
+# a modern replacement.
+select = ["E", "F", "W", "I", "B", "UP"]
+
+[lint.isort]
+# This service's own modules, so imports group as: standard library, third
+# party, then these.
+known-first-party = ["enquiries", "app", "config", "cors", "db", "migrate", "security", "tests"]

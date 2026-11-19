@@ -8,8 +8,9 @@ above the storage, and the storage conforms to an interface the rules define.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import date
-from typing import Any, Callable, Protocol
+from typing import Any, Protocol
 
 from animals.models import (
     Animal,

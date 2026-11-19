@@ -9,10 +9,10 @@ from dataclasses import replace
 import pytest
 
 from app import create_app
-from migrate import MIGRATIONS_DIR
 from enquiries.models import Topic, ValidationError
 from enquiries.repository import SqlEnquiryRepository
 from enquiries.service import EnquiryNotFound, EnquiryService
+from migrate import MIGRATIONS_DIR
 from tests.conftest import ADMIN_PASSWORD
 
 STAFF = {

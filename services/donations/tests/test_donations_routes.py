@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import base64
 from dataclasses import replace
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 import stripe
@@ -35,7 +35,10 @@ def _record(client, body=GIFT) -> dict:
 # --- access ------------------------------------------------------------------
 
 
-@pytest.mark.parametrize(("method", "path"), [("post", "/api/donations"), ("get", "/api/donations"), ("get", "/api/donations/1")])
+@pytest.mark.parametrize(
+    ("method", "path"),
+    [("post", "/api/donations"), ("get", "/api/donations"), ("get", "/api/donations/1")],
+)
 def test_staff_endpoints_require_the_admin_password(client, method, path):
     assert getattr(client, method)(path, json=GIFT).status_code == 401
 
@@ -143,7 +146,7 @@ def test_amman_today_is_three_hours_ahead_of_utc(monkeypatch):
     class LateEveningUTC(datetime):
         @classmethod
         def now(cls, tz=None):
-            return datetime(2026, 9, 30, 22, 30, tzinfo=timezone.utc).astimezone(tz)
+            return datetime(2026, 9, 30, 22, 30, tzinfo=UTC).astimezone(tz)
 
     monkeypatch.setattr(app_module, "datetime", LateEveningUTC)
     assert app_module.amman_today().isoformat() == "2026-10-01"

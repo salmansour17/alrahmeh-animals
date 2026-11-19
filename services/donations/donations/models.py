@@ -13,11 +13,12 @@ them would make the ledger depend on another service, which ADR-2 and ADR-6 forb
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
 from enum import StrEnum
-from typing import Any, Mapping
+from typing import Any
 
 FILS_PER_JOD = 1000
 JOD_DECIMAL_PLACES = 3

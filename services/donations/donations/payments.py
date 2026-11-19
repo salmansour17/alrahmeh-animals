@@ -16,7 +16,7 @@ directly would need none of this.
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone, tzinfo
+from datetime import UTC, datetime, tzinfo
 from typing import Any
 
 import stripe
@@ -148,7 +148,7 @@ class StripeGateway:
             purpose=metadata.get(META_PURPOSE),
             earmarked_animal_id=_positive_int_or_none(metadata.get(META_EARMARKED_ANIMAL_ID)),
             donor_name=metadata.get(META_DONOR_NAME),
-            paid_on=datetime.fromtimestamp(event.created, timezone.utc)
+            paid_on=datetime.fromtimestamp(event.created, UTC)
             .astimezone(self._local_timezone)
             .date(),
         )
