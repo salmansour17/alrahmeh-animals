@@ -1,0 +1,198 @@
+openapi: 3.0.3
+info:
+  title: Al-Rahmeh enquiries service
+  version: "1.0"
+  description: >
+    Contact and volunteer messages from the public, kept for staff. Written by
+    hand; tests/test_openapi.py fails if a Flask route and this file disagree.
+    This service calls no other service.
+servers:
+  - url: http://localhost:8003
+    description: Docker Compose
+
+tags:
+  - name: health
+  - name: enquiries
+  - name: staff
+
+paths:
+  /health:
+    get:
+      tags: [health]
+      summary: Whether this service can read and write its own database
+      responses:
+        "200":
+          description: Healthy
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Health"}
+        "503":
+          description: The database cannot be read or written
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Health"}
+
+  /api/meta/schema:
+    get:
+      tags: [staff]
+      summary: Tables present in this service's database
+      security: [{staff: []}]
+      responses:
+        "200":
+          description: Table names
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [tables]
+                properties:
+                  tables: {type: array, items: {type: string}}
+        "401": {$ref: "#/components/responses/Unauthorised"}
+        "503": {$ref: "#/components/responses/StaffDisabled"}
+
+  /api/enquiries:
+    post:
+      tags: [enquiries]
+      summary: Send a contact or volunteer message (public form)
+      description: >
+        The answer is the same whether the message was stored or caught by the
+        honeypot, so a bot cannot tell.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [topic, name, email, subject, message]
+              additionalProperties: false
+              properties:
+                topic: {$ref: "#/components/schemas/Topic"}
+                name: {type: string, maxLength: 120}
+                email: {type: string, maxLength: 254}
+                subject: {type: string, maxLength: 150}
+                message: {type: string, maxLength: 4000}
+                website: {type: string, description: "Honeypot: left empty by people, filled by bots"}
+      responses:
+        "201":
+          description: Received (stored, or quietly dropped as spam)
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties:
+                  status: {type: string, enum: [received]}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "415":
+          description: Send application/json
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+    get:
+      tags: [staff]
+      summary: Messages, newest first
+      security: [{staff: []}]
+      parameters:
+        - name: handled
+          in: query
+          required: false
+          schema: {type: string, enum: ["true", "false"]}
+        - name: limit
+          in: query
+          required: false
+          schema: {type: integer, minimum: 1, maximum: 200}
+        - name: offset
+          in: query
+          required: false
+          schema: {type: integer, minimum: 0}
+      responses:
+        "200":
+          description: The messages, sender included
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [enquiries]
+                properties:
+                  enquiries: {type: array, items: {$ref: "#/components/schemas/Enquiry"}}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorised"}
+        "503": {$ref: "#/components/responses/StaffDisabled"}
+
+  /api/enquiries/{enquiry_id}/handled:
+    post:
+      tags: [staff]
+      summary: Mark a message handled (doing it twice changes nothing)
+      security: [{staff: []}]
+      parameters:
+        - name: enquiry_id
+          in: path
+          required: true
+          schema: {type: integer, minimum: 1}
+      responses:
+        "200":
+          description: The message, now handled
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Enquiry"}
+        "401": {$ref: "#/components/responses/Unauthorised"}
+        "404":
+          description: No such message
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "503": {$ref: "#/components/responses/StaffDisabled"}
+
+components:
+  securitySchemes:
+    staff:
+      type: http
+      scheme: basic
+      description: The shared staff password as the password of an HTTP Basic credential; the username is ignored.
+
+  schemas:
+    Health:
+      type: object
+      required: [status, db, version]
+      properties:
+        status: {type: string, enum: [ok, error]}
+        db: {type: string, enum: [ok, error]}
+        version: {type: string, description: "Git commit of the build, or dev"}
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error: {type: string, description: "A stable name, such as validation_failed"}
+        detail: {type: string}
+    Topic:
+      type: string
+      enum: [volunteer, question, shop_order, other]
+    Enquiry:
+      type: object
+      required: [id, topic, name, email, subject, message, handled, received_at]
+      properties:
+        id: {type: integer}
+        topic: {$ref: "#/components/schemas/Topic"}
+        name: {type: string}
+        email: {type: string}
+        subject: {type: string}
+        message: {type: string}
+        handled: {type: boolean}
+        received_at: {type: string, description: "YYYY-MM-DD HH:MM:SS, UTC"}
+
+  responses:
+    BadRequest:
+      description: The request is not valid; `detail` says why
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/Error"}
+    Unauthorised:
+      description: Missing or wrong staff password
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/Error"}
+    StaffDisabled:
+      description: Staff endpoints are switched off because ADMIN_PASSWORD is not set
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/Error"}

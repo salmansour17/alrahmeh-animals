@@ -19,6 +19,8 @@ from __future__ import annotations
 import logging
 import time
 from collections.abc import Callable, Iterator
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FutureTimeout
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import Any
@@ -53,6 +55,18 @@ DEFAULT_ATTEMPTS = 8
 DEFAULT_FIRST_DELAY_S = 1.0
 DEFAULT_MAX_DELAY_S = 15.0
 LOGIN_TIMEOUT_S = 10
+# The health check gives up much sooner: the platform's probes and the deploy
+# pipeline wait a few seconds for an answer, and "not ready" is the right
+# answer while the database is unreachable. The login timeout does not cover
+# looking up the server's name, which inside Docker can take 15 seconds for a
+# stopped container, so the whole check also runs against a deadline.
+HEALTH_LOGIN_TIMEOUT_S = 3
+HEALTH_DEADLINE_S = 5
+
+# Threads for the health check's deadline. A check abandoned at the deadline
+# finishes on its own in the background; two threads are plenty for probes
+# that arrive every few seconds.
+_HEALTH_WORKERS = ThreadPoolExecutor(max_workers=2, thread_name_prefix="health")
 QUERY_TIMEOUT_S = 30
 
 
@@ -164,20 +178,22 @@ class Database:
     def name(self) -> str:
         return self._settings.database
 
-    def connect(self) -> Any:
+    def connect(self, retry: bool = True, login_timeout_s: int = LOGIN_TIMEOUT_S) -> Any:
         """Open a connection, retrying with backoff while the database wakes up.
 
         A new connection per unit of work rather than one shared connection: a
         connection cannot safely serve two requests at once, and the server
-        handles requests on several threads.
+        handles requests on several threads. retry=False makes one attempt
+        only, for the health check, which must answer quickly either way.
         """
+        attempts = self._attempts if retry else 1
         delay = self._first_delay_s
-        for attempt in range(1, self._attempts + 1):
+        for attempt in range(1, attempts + 1):
             try:
-                return self._open()
+                return self._open(login_timeout_s)
             except pymssql.Error as error:
                 number = _error_number(error)
-                if number not in RETRYABLE_ERRORS or attempt == self._attempts:
+                if number not in RETRYABLE_ERRORS or attempt == attempts:
                     raise
                 # The error number only: the message can include the host and
                 # user, and none of it helps more than the number does.
@@ -193,7 +209,7 @@ class Database:
                 delay = min(delay * 2, self._max_delay_s)
         raise AssertionError("unreachable")  # the loop always returns or raises
 
-    def _open(self) -> Any:
+    def _open(self, login_timeout_s: int) -> Any:
         settings = self._settings
         options: dict[str, Any] = {
             "server": settings.host,
@@ -201,7 +217,7 @@ class Database:
             "user": settings.user,
             "password": settings.password,
             "database": settings.database,
-            "login_timeout": LOGIN_TIMEOUT_S,
+            "login_timeout": login_timeout_s,
             "timeout": QUERY_TIMEOUT_S,
             "charset": "UTF-8",
             "tds_version": "7.4",
@@ -213,14 +229,14 @@ class Database:
         return self._connect(**options)
 
     @contextmanager
-    def unit_of_work(self) -> Iterator[Connection]:
+    def unit_of_work(self, retry: bool = True, login_timeout_s: int = LOGIN_TIMEOUT_S) -> Iterator[Connection]:
         """Run a block inside one transaction, then commit or roll back.
 
         Committing on the way out and rolling back on an exception means a
         half-applied write cannot survive an error, and callers never have to
         remember to commit.
         """
-        raw = self.connect()
+        raw = self.connect(retry=retry, login_timeout_s=login_timeout_s)
         try:
             yield Connection(raw)
             raw.commit()
@@ -229,6 +245,29 @@ class Database:
             raise
         finally:
             raw.close()
+
+    def check_read_write(self, deadline_s: float = HEALTH_DEADLINE_S) -> None:
+        """Prove the service can write to and read from its own database, for
+        GET /health. Raises if it cannot, or if it has no answer within
+        deadline_s seconds.
+
+        It moves the timestamp on the single row of health_probe (created by a
+        migration) and reads it back, so the table never grows. One attempt,
+        no retries, and a short login timeout: a database that is still waking
+        up should show as not ready, quickly, rather than hold the check.
+        """
+        future = _HEALTH_WORKERS.submit(self._probe)
+        try:
+            future.result(timeout=deadline_s)
+        except FutureTimeout:
+            raise TimeoutError("no answer from the database before the health check's deadline") from None
+
+    def _probe(self) -> None:
+        with self.unit_of_work(retry=False, login_timeout_s=HEALTH_LOGIN_TIMEOUT_S) as connection:
+            connection.execute("UPDATE health_probe SET checked_at = SYSUTCDATETIME() WHERE id = 1")
+            row = connection.execute("SELECT checked_at FROM health_probe WHERE id = 1").fetchone()
+        if row is None:
+            raise RuntimeError("health_probe has no row")
 
     def table_names(self) -> list[str]:
         """Tables currently present in this service's database."""

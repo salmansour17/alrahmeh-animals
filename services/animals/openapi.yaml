@@ -1,0 +1,591 @@
+openapi: 3.0.3
+info:
+  title: Al-Rahmeh animals service
+  version: "1.0"
+  description: >
+    Animal intake, the placement lifecycle, adoption and foster requests,
+    offline adoptions and photos. Written by hand; tests/test_openapi.py fails
+    if a Flask route and this file disagree. The donations service calls
+    GET /api/animals/{animal_id} (see system.yaml); contracts/check_contracts.py
+    checks that call against this file.
+servers:
+  - url: http://localhost:8001
+    description: Docker Compose
+
+tags:
+  - name: health
+  - name: animals
+  - name: requests
+  - name: staff
+
+paths:
+  /health:
+    get:
+      tags: [health]
+      summary: Whether this service can read and write its own database
+      responses:
+        "200":
+          description: Healthy
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Health"}
+        "503":
+          description: The database cannot be read or written
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Health"}
+
+  /api/meta/schema:
+    get:
+      tags: [staff]
+      summary: Tables present in this service's database
+      security: [{staff: []}]
+      responses:
+        "200":
+          description: Table names
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [tables]
+                properties:
+                  tables: {type: array, items: {type: string}}
+        "401": {$ref: "#/components/responses/Unauthorised"}
+        "503": {$ref: "#/components/responses/StaffDisabled"}
+
+  /api/animals:
+    get:
+      tags: [animals]
+      summary: Every animal, optionally filtered by status
+      parameters:
+        - name: status
+          in: query
+          required: false
+          schema: {$ref: "#/components/schemas/Status"}
+      responses:
+        "200":
+          description: The animals
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [animals]
+                properties:
+                  animals: {type: array, items: {$ref: "#/components/schemas/Animal"}}
+        "400": {$ref: "#/components/responses/BadRequest"}
+    post:
+      tags: [staff]
+      summary: Admit an animal
+      security: [{staff: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, species, intake_date]
+              additionalProperties: false
+              properties:
+                name: {type: string, maxLength: 80}
+                species: {type: string, maxLength: 40}
+                breed: {type: string, maxLength: 80, nullable: true}
+                intake_date: {type: string, format: date}
+                notes: {type: string, maxLength: 2000, nullable: true}
+      responses:
+        "201":
+          description: Admitted
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - {$ref: "#/components/schemas/Animal"}
+                  - type: object
+                    properties:
+                      notes: {type: string, nullable: true}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorised"}
+        "503": {$ref: "#/components/responses/StaffDisabled"}
+
+  /api/animals/stats:
+    get:
+      tags: [animals]
+      summary: How many animals are in each status, and homes found in total
+      responses:
+        "200":
+          description: Counts
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [available, fostering, pending, adopted, homes_found]
+                properties:
+                  available: {type: integer}
+                  fostering: {type: integer}
+                  pending: {type: integer}
+                  adopted: {type: integer}
+                  homes_found:
+                    type: integer
+                    description: Adopted animals on record plus offline adoptions
+
+  /api/animals/{animal_id}:
+    get:
+      tags: [animals]
+      summary: One animal's public profile
+      description: >
+        Also the endpoint the donations service calls to check that an
+        earmarked animal exists: 200 means it does, 404 that it does not.
+      parameters:
+        - {$ref: "#/components/parameters/AnimalId"}
+      responses:
+        "200":
+          description: The animal
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - {$ref: "#/components/schemas/Animal"}
+                  - type: object
+                    required: [profile, vaccinations]
+                    properties:
+                      profile: {$ref: "#/components/schemas/Profile"}
+                      vaccinations:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            description: {type: string}
+                            occurred_on: {type: string, format: date}
+        "404": {$ref: "#/components/responses/NotFound"}
+
+  /api/animals/{animal_id}/staff:
+    get:
+      tags: [staff]
+      summary: One animal with notes, medical records and status history
+      security: [{staff: []}]
+      parameters:
+        - {$ref: "#/components/parameters/AnimalId"}
+      responses:
+        "200":
+          description: The animal, staff view
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - {$ref: "#/components/schemas/Animal"}
+                  - type: object
+                    required: [profile, notes, medical_records, status_history]
+                    properties:
+                      profile: {$ref: "#/components/schemas/Profile"}
+                      notes: {type: string, nullable: true}
+                      medical_records: {type: array, items: {$ref: "#/components/schemas/MedicalRecord"}}
+                      status_history:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            from: {$ref: "#/components/schemas/Status"}
+                            to: {$ref: "#/components/schemas/Status"}
+                            reason: {type: string, nullable: true}
+                            changed_at: {type: string, description: "YYYY-MM-DD HH:MM:SS, UTC"}
+        "401": {$ref: "#/components/responses/Unauthorised"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "503": {$ref: "#/components/responses/StaffDisabled"}
+
+  /api/animals/{animal_id}/profile:
+    put:
+      tags: [staff]
+      summary: Replace an animal's public profile
+      security: [{staff: []}]
+      parameters:
+        - {$ref: "#/components/parameters/AnimalId"}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                born_on: {type: string, format: date, nullable: true}
+                colour: {type: string, maxLength: 40, nullable: true}
+                personality: {type: string, maxLength: 60, nullable: true}
+                weight_kg: {type: string, description: "Kilograms as a decimal string", nullable: true}
+                about: {type: string, maxLength: 1000, nullable: true}
+      responses:
+        "200":
+          description: The saved profile
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Profile"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorised"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "503": {$ref: "#/components/responses/StaffDisabled"}
+
+  /api/animals/{animal_id}/photo:
+    get:
+      tags: [animals]
+      summary: The animal's photo, as WebP
+      parameters:
+        - {$ref: "#/components/parameters/AnimalId"}
+        - name: v
+          in: query
+          required: false
+          description: The photo's version. With the current one, the answer may be cached for a year.
+          schema: {type: string}
+      responses:
+        "200":
+          description: The photo
+          content:
+            image/webp:
+              schema: {type: string, format: binary}
+        "404": {$ref: "#/components/responses/NotFound"}
+    put:
+      tags: [staff]
+      summary: Upload or replace the animal's photo (re-encoded as WebP, metadata removed)
+      security: [{staff: []}]
+      parameters:
+        - {$ref: "#/components/parameters/AnimalId"}
+      requestBody:
+        required: true
+        content:
+          image/jpeg:
+            schema: {type: string, format: binary}
+          image/png:
+            schema: {type: string, format: binary}
+          image/webp:
+            schema: {type: string, format: binary}
+      responses:
+        "200":
+          description: Stored
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [photo_url]
+                properties:
+                  photo_url: {type: string}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorised"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "413": {$ref: "#/components/responses/TooLarge"}
+        "415": {$ref: "#/components/responses/UnsupportedMediaType"}
+        "503": {$ref: "#/components/responses/StaffDisabled"}
+
+  /api/animals/{animal_id}/requests:
+    post:
+      tags: [animals]
+      summary: Ask to adopt or foster an animal (public form)
+      description: >
+        Creates an open request; only a staff decision changes the animal. The
+        answer is the same whether the request was stored or caught by the
+        honeypot, so a bot cannot tell.
+      parameters:
+        - {$ref: "#/components/parameters/AnimalId"}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [kind, name, email]
+              additionalProperties: false
+              properties:
+                kind: {type: string, enum: [adoption, foster]}
+                name: {type: string, maxLength: 120}
+                email: {type: string, maxLength: 254}
+                message: {type: string, maxLength: 2000, nullable: true}
+                website: {type: string, description: "Honeypot: left empty by people, filled by bots"}
+      responses:
+        "201": {$ref: "#/components/responses/Received"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "415": {$ref: "#/components/responses/UnsupportedMediaType"}
+
+  /api/animals/{animal_id}/transitions:
+    post:
+      tags: [staff]
+      summary: Move an animal through the placement lifecycle
+      security: [{staff: []}]
+      parameters:
+        - {$ref: "#/components/parameters/AnimalId"}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [to]
+              additionalProperties: false
+              properties:
+                to: {$ref: "#/components/schemas/Status"}
+                reason: {type: string, maxLength: 500, nullable: true}
+      responses:
+        "200":
+          description: The animal after the move
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Animal"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorised"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "503": {$ref: "#/components/responses/StaffDisabled"}
+
+  /api/animals/{animal_id}/medical-records:
+    post:
+      tags: [staff]
+      summary: Add a vaccination, treatment or check-up
+      security: [{staff: []}]
+      parameters:
+        - {$ref: "#/components/parameters/AnimalId"}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [record_type, description, occurred_on]
+              additionalProperties: false
+              properties:
+                record_type: {type: string, enum: [vaccination, treatment, checkup]}
+                description: {type: string, maxLength: 500}
+                occurred_on: {type: string, format: date}
+      responses:
+        "201":
+          description: Recorded
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/MedicalRecord"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorised"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "503": {$ref: "#/components/responses/StaffDisabled"}
+
+  /api/animals/offline-adoptions:
+    get:
+      tags: [staff]
+      summary: Adoptions arranged entirely in person
+      security: [{staff: []}]
+      responses:
+        "200":
+          description: The entries, newest first
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [offline_adoptions]
+                properties:
+                  offline_adoptions: {type: array, items: {$ref: "#/components/schemas/OfflineAdoption"}}
+        "401": {$ref: "#/components/responses/Unauthorised"}
+        "503": {$ref: "#/components/responses/StaffDisabled"}
+    post:
+      tags: [staff]
+      summary: Record adoptions arranged in person
+      security: [{staff: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [animal_count, adopted_on]
+              additionalProperties: false
+              properties:
+                animal_count: {type: integer, minimum: 1, maximum: 10000}
+                adopted_on: {type: string, format: date}
+                note: {type: string, maxLength: 500, nullable: true}
+      responses:
+        "201":
+          description: Recorded
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/OfflineAdoption"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorised"}
+        "503": {$ref: "#/components/responses/StaffDisabled"}
+
+  /api/requests:
+    get:
+      tags: [requests]
+      summary: Adoption and foster requests, optionally by outcome
+      security: [{staff: []}]
+      parameters:
+        - name: status
+          in: query
+          required: false
+          schema: {type: string, enum: [open, approved, declined]}
+      responses:
+        "200":
+          description: The requests, applicant details included
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [requests]
+                properties:
+                  requests: {type: array, items: {$ref: "#/components/schemas/PlacementRequest"}}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorised"}
+        "503": {$ref: "#/components/responses/StaffDisabled"}
+
+  /api/requests/{request_id}/decision:
+    post:
+      tags: [requests]
+      summary: Approve or decline a request, moving the animal if needed
+      security: [{staff: []}]
+      parameters:
+        - name: request_id
+          in: path
+          required: true
+          schema: {type: integer, minimum: 1}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [outcome]
+              additionalProperties: false
+              properties:
+                outcome: {type: string, enum: [approved, declined]}
+                reason: {type: string, maxLength: 500, nullable: true}
+      responses:
+        "200":
+          description: The decided request
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/PlacementRequest"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorised"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/Conflict"}
+        "503": {$ref: "#/components/responses/StaffDisabled"}
+
+components:
+  securitySchemes:
+    staff:
+      type: http
+      scheme: basic
+      description: The shared staff password as the password of an HTTP Basic credential; the username is ignored.
+
+  parameters:
+    AnimalId:
+      name: animal_id
+      in: path
+      required: true
+      schema: {type: integer, minimum: 1}
+
+  schemas:
+    Health:
+      type: object
+      required: [status, db, version]
+      properties:
+        status: {type: string, enum: [ok, error]}
+        db: {type: string, enum: [ok, error]}
+        version: {type: string, description: "Git commit of the build, or dev"}
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error: {type: string, description: "A stable name, such as not_found"}
+        detail: {type: string}
+    Status:
+      type: string
+      enum: [available, fostering, pending, adopted]
+    Animal:
+      type: object
+      required: [id, name, species, breed, intake_date, status, photo_url]
+      properties:
+        id: {type: integer}
+        name: {type: string}
+        species: {type: string}
+        breed: {type: string, nullable: true}
+        intake_date: {type: string, format: date}
+        status: {$ref: "#/components/schemas/Status"}
+        photo_url: {type: string, nullable: true, description: "Includes ?v=<version>; null without a photo"}
+    Profile:
+      type: object
+      properties:
+        age: {type: string, nullable: true}
+        born_on: {type: string, format: date, nullable: true}
+        colour: {type: string, nullable: true}
+        personality: {type: string, nullable: true}
+        weight: {type: string, nullable: true}
+        weight_kg: {type: string, nullable: true}
+        about: {type: string, nullable: true}
+    MedicalRecord:
+      type: object
+      required: [id, record_type, description, occurred_on]
+      properties:
+        id: {type: integer}
+        record_type: {type: string, enum: [vaccination, treatment, checkup]}
+        description: {type: string}
+        occurred_on: {type: string, format: date}
+    OfflineAdoption:
+      type: object
+      required: [id, animal_count, adopted_on]
+      properties:
+        id: {type: integer}
+        animal_count: {type: integer}
+        adopted_on: {type: string, format: date}
+        note: {type: string, nullable: true}
+    PlacementRequest:
+      type: object
+      required: [id, animal_id, kind, applicant_name, applicant_email, outcome, submitted_at]
+      properties:
+        id: {type: integer}
+        animal_id: {type: integer}
+        kind: {type: string, enum: [adoption, foster]}
+        applicant_name: {type: string}
+        applicant_email: {type: string}
+        message: {type: string, nullable: true}
+        outcome: {type: string, enum: [open, approved, declined]}
+        submitted_at: {type: string, description: "YYYY-MM-DD HH:MM:SS, UTC"}
+
+  responses:
+    Received:
+      description: Received (stored, or quietly dropped as spam)
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [status]
+            properties:
+              status: {type: string, enum: [received]}
+    BadRequest:
+      description: The request is not valid; `detail` says why
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/Error"}
+    NotFound:
+      description: No such animal, request or photo
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/Error"}
+    Conflict:
+      description: The animal or request is not in a state that allows this
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/Error"}
+    TooLarge:
+      description: The body is too large (photos up to 10 MB, anything else 64 KB)
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/Error"}
+    UnsupportedMediaType:
+      description: Wrong content type (JSON for forms; JPEG, PNG or WebP for photos)
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/Error"}
+    Unauthorised:
+      description: Missing or wrong staff password
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/Error"}
+    StaffDisabled:
+      description: Staff endpoints are switched off because ADMIN_PASSWORD is not set
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/Error"}

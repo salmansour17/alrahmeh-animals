@@ -63,7 +63,7 @@ def test_unset_password_disables_staff_endpoints(config):
 def test_public_endpoints_stay_public(config):
     """The guard must not leak onto unprotected routes."""
     client = create_app(replace(config, admin_password=None)).test_client()
-    assert client.get("/api/health").status_code == 200
+    assert client.get("/health").status_code == 200
 
 
 # --- secrets in configuration -------------------------------------------------

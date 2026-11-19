@@ -24,6 +24,15 @@ COPY app.py config.py cors.py db.py migrate.py security.py entrypoint.sh ./
 COPY donations/ donations/
 COPY migrations/ migrations/
 
+# The git commit this image is built from, passed by the pipeline with
+# --build-arg GIT_SHA=<sha>, kept as an environment variable so GET /health can
+# report it ("dev" when built without it). It comes this late on purpose: every
+# commit has a new value, and Docker rebuilds every layer after the one where a
+# value changes, so placed earlier it would reinstall all the dependencies on
+# every build.
+ARG GIT_SHA=dev
+ENV GIT_SHA=${GIT_SHA}
+
 # Run as an ordinary user, not root, so a flaw in the app cannot rewrite the
 # image's files. The code stays owned by root and is only readable to it.
 RUN useradd --create-home --uid 10001 app

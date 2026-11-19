@@ -1,0 +1,113 @@
+# yaml-language-server: $schema=./system.schema.json
+#
+# The system at a glance: every service, every environment variable it reads,
+# its calls to other services, and the Azure resources it runs on. CI checks
+# this file against system.schema.json and against the code
+# (contracts/check_contracts.py), so it cannot drift from what is deployed.
+#
+# Placeholders to fill in once, after the Azure setup:
+#   <STUDENT>  IE username (the part of the IE email before @)
+#   <PREFIX>   the same with dots replaced by hyphens
+#   <PREFIXNH> the prefix without hyphens
+#   <N>        the zone number in the static website address Azure assigns
+
+student: <STUDENT>
+prefix: <PREFIX>
+public_url: https://<PREFIXNH>ui.z<N>.web.core.windows.net
+
+ui:
+  path: ui
+  storage_account: <PREFIXNH>ui
+  calls: [animals, donations, enquiries]
+
+azure:
+  resource_group: rg-<PREFIX>
+  container_apps_environment: <PREFIX>-env
+  sql_server: <PREFIX>-sql
+  registry: ghcr.io/salmansour17
+
+services:
+  animals:
+    description: >
+      Animal intake, the placement lifecycle, adoption and foster requests,
+      offline adoptions and photos. Calls no other service.
+    path: services/animals
+    openapi: services/animals/openapi.yaml
+    port_default: 8000
+    health: /health
+    migrations: services/animals/migrations
+    env:
+      PORT: { default: 8000, description: "Port the service listens on; a malformed value falls back to 8000" }
+      DATABASE_URL: { secret: true, description: "Connection string of the animals database, mssql://USER:PASSWORD@HOST:PORT/DB[?encrypt=true]" }
+      ADMIN_PASSWORD: { secret: true, description: "Staff password for the staff endpoints; unset switches them off (503)" }
+      CORS_ORIGINS: { default: "", description: "Website origins allowed to call from a browser, comma separated; empty allows none" }
+      SAMPLE_ANIMALS: { default: "1", description: "Add six sample animals at start when there are none; 0 starts empty" }
+      FLASK_DEBUG: { default: "0", description: "Flask debug mode for development; never on in a container" }
+      GIT_SHA: { default: dev, description: "Git commit of the build, set at image build time and reported by /health" }
+      WEB_WORKERS: { default: 2, description: "Number of gunicorn worker processes in the container" }
+    azure:
+      container_app: <PREFIX>-animals
+      sql_database: <PREFIX>-animals-db
+
+  donations:
+    description: >
+      The append-only donation ledger, card payments through Stripe (test
+      mode) and the impact figures. Calls the animals service to check
+      earmarked animals.
+    path: services/donations
+    openapi: services/donations/openapi.yaml
+    port_default: 8000
+    health: /health
+    migrations: services/donations/migrations
+    env:
+      PORT: { default: 8000, description: "Port the service listens on; a malformed value falls back to 8000" }
+      DATABASE_URL: { secret: true, description: "Connection string of the donations database, mssql://USER:PASSWORD@HOST:PORT/DB[?encrypt=true]" }
+      ADMIN_PASSWORD: { secret: true, description: "Staff password for the staff endpoints; unset switches them off (503)" }
+      STRIPE_SECRET_KEY: { secret: true, description: "Stripe test-mode secret key; unset or a live key switches card donations off (503)" }
+      STRIPE_WEBHOOK_SECRET: { secret: true, description: "Signing secret that verifies Stripe's webhook calls; unset switches card donations off" }
+      CORS_ORIGINS: { default: "", description: "Website origins allowed to call from a browser, comma separated; empty allows none" }
+      PUBLIC_BASE_URL: { default: "http://localhost:5173", description: "The website's origin, where Stripe sends donors back after paying" }
+      ANIMALS_URL: { default: "http://animals:8000", description: "Base URL of the animals service" }
+      ANIMALS_TIMEOUT_S: { default: 2, description: "Deadline in seconds for a whole call to the animals service" }
+      CLIQ_ALIAS: { default: "", description: "The rescue's CliQ alias for the donate page; empty hides it" }
+      BANK_NAME: { default: "", description: "Bank name for bank transfers on the donate page" }
+      BANK_IBAN: { default: "", description: "IBAN for bank transfers; with BANK_ACCOUNT_NAME, shows the bank option" }
+      BANK_ACCOUNT_NAME: { default: "", description: "Account holder for bank transfers" }
+      FLASK_DEBUG: { default: "0", description: "Flask debug mode for development; never on in a container" }
+      GIT_SHA: { default: dev, description: "Git commit of the build, set at image build time and reported by /health" }
+      WEB_WORKERS: { default: 2, description: "Number of gunicorn worker processes in the container" }
+    calls:
+      - service: animals
+        url_env: ANIMALS_URL
+        endpoints: ["GET /api/animals/{animal_id}"]
+        timeout_s: 2
+        on_failure: >
+          Staff recording an earmarked cash or bank donation get a 503 asking
+          them to try again in a minute, and nothing is recorded. A donor's
+          card checkout goes ahead with the earmark unverified, and the
+          payment webhook records the gift and logs it for staff. Donations
+          without an earmark and the impact figures never call animals.
+    azure:
+      container_app: <PREFIX>-donations
+      sql_database: <PREFIX>-donations-db
+
+  enquiries:
+    description: >
+      Contact and volunteer messages from the public, kept for staff. Calls no
+      other service.
+    path: services/enquiries
+    openapi: services/enquiries/openapi.yaml
+    port_default: 8000
+    health: /health
+    migrations: services/enquiries/migrations
+    env:
+      PORT: { default: 8000, description: "Port the service listens on; a malformed value falls back to 8000" }
+      DATABASE_URL: { secret: true, description: "Connection string of the enquiries database, mssql://USER:PASSWORD@HOST:PORT/DB[?encrypt=true]" }
+      ADMIN_PASSWORD: { secret: true, description: "Staff password for the staff endpoints; unset switches them off (503)" }
+      CORS_ORIGINS: { default: "", description: "Website origins allowed to call from a browser, comma separated; empty allows none" }
+      FLASK_DEBUG: { default: "0", description: "Flask debug mode for development; never on in a container" }
+      GIT_SHA: { default: dev, description: "Git commit of the build, set at image build time and reported by /health" }
+      WEB_WORKERS: { default: 2, description: "Number of gunicorn worker processes in the container" }
+    azure:
+      container_app: <PREFIX>-enquiries
+      sql_database: <PREFIX>-enquiries-db

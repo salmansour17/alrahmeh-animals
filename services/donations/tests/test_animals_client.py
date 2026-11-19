@@ -72,3 +72,48 @@ def test_the_id_is_sent_as_a_number_only(stub):
     ever reaches the URL path."""
     HttpAnimalDirectory(stub.url + "/", timeout_s=2).exists(True)
     assert stub.requests == ["/api/animals/1"]
+
+
+def test_a_slow_name_lookup_cannot_stretch_the_deadline(monkeypatch):
+    """The bug this guards against: urllib's timeout covers connecting and
+    reading, not looking up the host name, so a lookup that hung for seconds
+    used to add its whole time on top. Now one deadline covers everything."""
+
+    def slow_lookup(*args, **kwargs):
+        time.sleep(3)
+        raise socket.gaierror("name or service not known")
+
+    monkeypatch.setattr(socket, "getaddrinfo", slow_lookup)
+    directory = HttpAnimalDirectory("http://animals.invalid:8000", timeout_s=0.3)
+
+    started = time.monotonic()
+    with pytest.raises(AnimalsUnavailable, match="deadline"):
+        directory.exists(7)
+    assert time.monotonic() - started < 1.0
+
+
+def test_an_unknown_host_is_unavailable_not_missing(monkeypatch):
+    """A name that does not resolve says nothing about the animal."""
+
+    def no_such_host(*args, **kwargs):
+        raise socket.gaierror("name or service not known")
+
+    monkeypatch.setattr(socket, "getaddrinfo", no_such_host)
+    with pytest.raises(AnimalsUnavailable, match="unreachable"):
+        HttpAnimalDirectory("http://animals.invalid:8000", timeout_s=2).exists(7)
+
+
+def test_a_call_that_starts_after_its_deadline_is_not_sent(stub):
+    from donations.animals_client import _get_status
+
+    with pytest.raises(AnimalsUnavailable, match="no time left"):
+        _get_status(f"{stub.url}/api/animals/7", deadline=time.monotonic() - 1)
+    assert stub.requests == []
+
+
+def test_an_unexpected_status_means_unavailable(stub):
+    """Only 200 and 404 are answers about the animal; a redirect or any other
+    status is treated like an error."""
+    stub.mode = "teapot"
+    with pytest.raises(AnimalsUnavailable, match="418"):
+        HttpAnimalDirectory(stub.url, timeout_s=2).exists(7)

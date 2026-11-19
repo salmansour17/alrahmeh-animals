@@ -22,6 +22,7 @@ BIND_HOST = "0.0.0.0"
 
 SERVICE = "animals"
 DEFAULT_PORT = 8000
+DEFAULT_VERSION = "dev"
 
 
 @dataclass(frozen=True)
@@ -44,6 +45,9 @@ class Config:
     sample_animals: bool = False
     # Website origins allowed to call this service from a browser (cors.py).
     cors_origins: frozenset[str] = frozenset()
+    # The git commit this build came from, set at image build time (GIT_SHA);
+    # "dev" when running from a checkout. Reported by GET /health.
+    version: str = DEFAULT_VERSION
     service: str = SERVICE
 
 
@@ -58,6 +62,7 @@ def load_config() -> Config:
         # than falling back to a value an attacker could guess.
         admin_password=os.environ.get("ADMIN_PASSWORD") or None,
         cors_origins=_read_cors_origins(),
+        version=os.environ.get("GIT_SHA", "").strip() or DEFAULT_VERSION,
         sample_animals=os.environ.get("SAMPLE_ANIMALS", "1").strip() != "0",
     )
 

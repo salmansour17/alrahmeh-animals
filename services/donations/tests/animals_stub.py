@@ -18,7 +18,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 class AnimalsStub:
     """Start with `with AnimalsStub({7}) as stub:` and point the code under
     test at `stub.url`. Change `mode` to make it misbehave:
-    "ok" answers normally, "error" answers 500, "slow" waits `delay_s` first.
+    "ok" answers normally, "error" answers 500, "teapot" answers an unexpected
+    418, "slow" waits `delay_s` first.
     """
 
     def __init__(self, known_ids: set[int]) -> None:
@@ -33,6 +34,8 @@ class AnimalsStub:
                 stub.requests.append(self.path)
                 if stub.mode == "slow":
                     time.sleep(stub.delay_s)
+                if stub.mode == "teapot":
+                    return self._send(418, {"error": "unexpected"})
                 if stub.mode == "error":
                     return self._send(500, {"error": "internal_server_error"})
                 parts = self.path.strip("/").split("/")

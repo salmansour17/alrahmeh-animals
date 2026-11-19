@@ -1,0 +1,341 @@
+openapi: 3.0.3
+info:
+  title: Al-Rahmeh donations service
+  version: "1.0"
+  description: >
+    The append-only donation ledger, card payments through Stripe (test mode)
+    and the impact figures. Written by hand; tests/test_openapi.py fails if a
+    Flask route and this file disagree. This service calls the animals
+    service's GET /api/animals/{animal_id} to check earmarked animals (see
+    system.yaml and contracts/check_contracts.py).
+servers:
+  - url: http://localhost:8002
+    description: Docker Compose
+
+tags:
+  - name: health
+  - name: donations
+  - name: staff
+
+paths:
+  /health:
+    get:
+      tags: [health]
+      summary: Whether this service can read and write its own database
+      description: Reflects this service only; it does not call the animals service.
+      responses:
+        "200":
+          description: Healthy
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Health"}
+        "503":
+          description: The database cannot be read or written
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Health"}
+
+  /api/meta/schema:
+    get:
+      tags: [staff]
+      summary: Tables present in this service's database
+      security: [{staff: []}]
+      responses:
+        "200":
+          description: Table names
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [tables]
+                properties:
+                  tables: {type: array, items: {type: string}}
+        "401": {$ref: "#/components/responses/Unauthorised"}
+        "503": {$ref: "#/components/responses/StaffDisabled"}
+
+  /api/donations/impact:
+    get:
+      tags: [donations]
+      summary: Totals for the homepage, computed from the ledger
+      responses:
+        "200":
+          description: The figures
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [total_raised, donation_count, animals_helped, by_purpose]
+                properties:
+                  total_raised: {$ref: "#/components/schemas/Money"}
+                  donation_count: {type: integer}
+                  animals_helped: {type: integer, description: "Distinct animals with an earmarked gift"}
+                  by_purpose:
+                    type: object
+                    required: [medical_fund, food_fund, general]
+                    properties:
+                      medical_fund: {$ref: "#/components/schemas/Money"}
+                      food_fund: {$ref: "#/components/schemas/Money"}
+                      general: {$ref: "#/components/schemas/Money"}
+
+  /api/donations/offline-methods:
+    get:
+      tags: [donations]
+      summary: CliQ and bank-transfer details, each null when not configured
+      responses:
+        "200":
+          description: The ways to give without a card
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [cliq, bank]
+                properties:
+                  cliq:
+                    type: object
+                    nullable: true
+                    properties:
+                      alias: {type: string}
+                  bank:
+                    type: object
+                    nullable: true
+                    properties:
+                      bank_name: {type: string, nullable: true}
+                      iban: {type: string}
+                      account_name: {type: string}
+
+  /api/donations/checkout:
+    post:
+      tags: [donations]
+      summary: Start a card donation (Stripe Checkout); writes nothing to the ledger
+      description: >
+        Public. If the gift is earmarked for an animal and the animals service
+        cannot answer, checkout still goes ahead and the earmark is checked
+        again when the payment arrives (ADR-6).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [amount_jod, purpose]
+              additionalProperties: false
+              properties:
+                amount_jod: {$ref: "#/components/schemas/AmountJod"}
+                purpose: {$ref: "#/components/schemas/Purpose"}
+                donor_name: {type: string, maxLength: 120, nullable: true}
+                earmarked_animal_id: {type: integer, minimum: 1, nullable: true}
+      responses:
+        "201":
+          description: Send the donor to this address to pay
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [checkout_url]
+                properties:
+                  checkout_url: {type: string}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "415": {$ref: "#/components/responses/UnsupportedMediaType"}
+        "502": {$ref: "#/components/responses/ProviderError"}
+        "503": {$ref: "#/components/responses/PaymentsUnavailable"}
+
+  /api/donations/stripe/webhook:
+    post:
+      tags: [donations]
+      summary: Stripe confirms a payment; the only way a card donation enters the ledger
+      description: >
+        Authenticated by the Stripe-Signature header over the raw body, not by
+        the staff password. A replayed event is recorded once.
+      parameters:
+        - name: Stripe-Signature
+          in: header
+          required: true
+          schema: {type: string}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {type: object, description: "A Stripe event, verified before it is read"}
+      responses:
+        "200":
+          description: Verified, and what happened to it
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties:
+                  status:
+                    type: string
+                    enum: [recorded, already_recorded, ignored, needs_reconciliation]
+        "400":
+          description: The signature does not verify
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "503": {$ref: "#/components/responses/PaymentsUnavailable"}
+
+  /api/donations:
+    get:
+      tags: [staff]
+      summary: Donations, newest first
+      security: [{staff: []}]
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema: {type: integer, minimum: 1, maximum: 200, default: 50}
+        - name: offset
+          in: query
+          required: false
+          schema: {type: integer, minimum: 0, default: 0}
+      responses:
+        "200":
+          description: A page of donations
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [donations]
+                properties:
+                  donations: {type: array, items: {$ref: "#/components/schemas/Donation"}}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorised"}
+        "503": {$ref: "#/components/responses/StaffDisabled"}
+    post:
+      tags: [staff]
+      summary: Record a donation received in cash or by bank transfer
+      description: >
+        If the gift is earmarked and the animals service cannot answer in time,
+        this answers 503 animals_unavailable and records nothing, so staff can
+        retry (ADR-6).
+      security: [{staff: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [amount_jod, purpose]
+              additionalProperties: false
+              properties:
+                amount_jod: {$ref: "#/components/schemas/AmountJod"}
+                purpose: {$ref: "#/components/schemas/Purpose"}
+                donor_name: {type: string, maxLength: 120, nullable: true}
+                earmarked_animal_id: {type: integer, minimum: 1, nullable: true}
+                received_on: {type: string, format: date, description: "Not in the future; today if left out"}
+      responses:
+        "201":
+          description: Recorded
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Donation"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorised"}
+        "503":
+          description: Staff endpoints switched off, or the earmarked animal could not be checked right now
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+
+  /api/donations/{donation_id}:
+    get:
+      tags: [staff]
+      summary: One donation
+      security: [{staff: []}]
+      parameters:
+        - name: donation_id
+          in: path
+          required: true
+          schema: {type: integer, minimum: 1}
+      responses:
+        "200":
+          description: The donation
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Donation"}
+        "401": {$ref: "#/components/responses/Unauthorised"}
+        "404":
+          description: No such donation
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "503": {$ref: "#/components/responses/StaffDisabled"}
+
+components:
+  securitySchemes:
+    staff:
+      type: http
+      scheme: basic
+      description: The shared staff password as the password of an HTTP Basic credential; the username is ignored.
+
+  schemas:
+    Health:
+      type: object
+      required: [status, db, version]
+      properties:
+        status: {type: string, enum: [ok, error]}
+        db: {type: string, enum: [ok, error]}
+        version: {type: string, description: "Git commit of the build, or dev"}
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error: {type: string, description: "A stable name, such as validation_failed"}
+        detail: {type: string}
+    AmountJod:
+      type: string
+      description: Jordanian dinars as a string with at most 3 decimals, for example "25.500"; never a JSON number
+      pattern: "^[0-9]+(\\.[0-9]{1,3})?$"
+    Purpose:
+      type: string
+      enum: [medical_fund, food_fund, general]
+    Money:
+      type: object
+      required: [amount_fils, amount_jod]
+      properties:
+        amount_fils: {type: integer, description: "1 JOD = 1000 fils"}
+        amount_jod: {type: string, example: "25.500"}
+    Donation:
+      type: object
+      required: [id, donor_name, amount_fils, amount_jod, purpose, earmarked_animal_id, received_on]
+      properties:
+        id: {type: integer}
+        donor_name: {type: string, nullable: true}
+        amount_fils: {type: integer}
+        amount_jod: {type: string}
+        purpose: {$ref: "#/components/schemas/Purpose"}
+        earmarked_animal_id: {type: integer, nullable: true}
+        received_on: {type: string, format: date}
+
+  responses:
+    BadRequest:
+      description: The request is not valid; `detail` says why
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/Error"}
+    UnsupportedMediaType:
+      description: Send application/json
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/Error"}
+    ProviderError:
+      description: Stripe could not be reached or refused the request
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/Error"}
+    PaymentsUnavailable:
+      description: Card donations are switched off (keys missing, or a live key refused)
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/Error"}
+    Unauthorised:
+      description: Missing or wrong staff password
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/Error"}
+    StaffDisabled:
+      description: Staff endpoints are switched off because ADMIN_PASSWORD is not set
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/Error"}

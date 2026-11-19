@@ -351,7 +351,7 @@ records what the tests deliberately leave thin.
 | `POST /api/enquiries` | public | Send a contact or volunteer message |
 | `GET /api/enquiries` | staff | Messages (`?handled=false`) |
 | `POST /api/enquiries/<id>/handled` | staff | Mark a message handled |
-| `GET /api/health` | public | Liveness check; answers `{"status": "ok"}` |
+| `GET /health` | public | Every service. 200 `{"status": "ok", "db": "ok", "version": "<git sha>"}` when the service can read and write its own database, 503 with `"status": "error"` otherwise |
 | `GET /api/meta/schema` | staff | Tables present, to confirm the schema applied itself |
 
 Amounts are sent as a string of Jordanian dinars, `"amount_jod": "25.500"`,

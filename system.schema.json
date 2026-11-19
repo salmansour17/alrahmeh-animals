@@ -1,0 +1,119 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "system.schema.json",
+  "title": "System description",
+  "description": "The format of system.yaml, written from the sample in section 8a of the Assignment 2 brief because no schema file was provided. Every service, its configuration, its calls to other services and its Azure resources.",
+  "type": "object",
+  "required": ["student", "prefix", "public_url", "ui", "azure", "services"],
+  "additionalProperties": false,
+  "properties": {
+    "student": {
+      "type": "string",
+      "description": "IE username, the part of the IE email before the @ (dots kept)."
+    },
+    "prefix": {
+      "type": "string",
+      "description": "The username with dots replaced by hyphens; every Azure resource name starts with it."
+    },
+    "public_url": {
+      "type": "string",
+      "description": "The storage account's static website endpoint: the system's public address."
+    },
+    "ui": {
+      "type": "object",
+      "required": ["path", "storage_account", "calls"],
+      "additionalProperties": false,
+      "properties": {
+        "path": {"type": "string", "description": "Folder holding the website."},
+        "storage_account": {"type": "string", "description": "The prefix without hyphens, followed by ui."},
+        "calls": {
+          "type": "array",
+          "description": "Services the website calls from the browser.",
+          "items": {"type": "string"},
+          "uniqueItems": true
+        }
+      }
+    },
+    "azure": {
+      "type": "object",
+      "required": ["resource_group", "container_apps_environment", "sql_server", "registry"],
+      "additionalProperties": false,
+      "properties": {
+        "resource_group": {"type": "string"},
+        "container_apps_environment": {"type": "string"},
+        "sql_server": {"type": "string"},
+        "registry": {"type": "string", "description": "Where the images are pushed, e.g. ghcr.io/<owner>."}
+      }
+    },
+    "services": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {"$ref": "#/$defs/service"}
+    }
+  },
+  "$defs": {
+    "service": {
+      "type": "object",
+      "required": ["description", "path", "openapi", "port_default", "health", "migrations", "env", "azure"],
+      "additionalProperties": false,
+      "properties": {
+        "description": {"type": "string"},
+        "path": {"type": "string", "description": "The service's folder."},
+        "openapi": {"type": "string", "description": "Path of its OpenAPI document."},
+        "port_default": {"type": "integer", "minimum": 1, "maximum": 65535},
+        "health": {"type": "string", "pattern": "^/"},
+        "migrations": {"type": "string", "description": "Folder of its versioned migrations."},
+        "env": {
+          "type": "object",
+          "description": "Every environment variable the service reads.",
+          "additionalProperties": {"$ref": "#/$defs/envVar"}
+        },
+        "calls": {
+          "type": "array",
+          "description": "Calls this service makes to other services. Absent or empty when it calls none.",
+          "items": {"$ref": "#/$defs/call"}
+        },
+        "azure": {
+          "type": "object",
+          "required": ["container_app", "sql_database"],
+          "additionalProperties": false,
+          "properties": {
+            "container_app": {"type": "string"},
+            "sql_database": {"type": "string"}
+          }
+        }
+      }
+    },
+    "envVar": {
+      "description": "A secret has no default and is marked secret: true; every other variable has a default.",
+      "type": "object",
+      "required": ["description"],
+      "additionalProperties": false,
+      "properties": {
+        "default": {"type": ["string", "number", "boolean"]},
+        "secret": {"type": "boolean"},
+        "description": {"type": "string"}
+      },
+      "oneOf": [
+        {"required": ["secret"], "properties": {"secret": {"const": true}}, "not": {"required": ["default"]}},
+        {"required": ["default"], "not": {"required": ["secret"], "properties": {"secret": {"const": true}}}}
+      ]
+    },
+    "call": {
+      "type": "object",
+      "required": ["service", "url_env", "endpoints", "timeout_s", "on_failure"],
+      "additionalProperties": false,
+      "properties": {
+        "service": {"type": "string", "description": "Name of the service called, a key of services."},
+        "url_env": {"type": "string", "description": "The environment variable holding that service's base URL."},
+        "endpoints": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"type": "string", "pattern": "^(GET|POST|PUT|PATCH|DELETE) /"}
+        },
+        "timeout_s": {"type": "number", "exclusiveMinimum": 0},
+        "on_failure": {"type": "string", "description": "What the user sees when the call fails."}
+      }
+    }
+  }
+}

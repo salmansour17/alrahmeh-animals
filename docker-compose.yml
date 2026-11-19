@@ -25,7 +25,8 @@ name: alrahmeh
 
 services:
   sqlserver:
-    image: mcr.microsoft.com/mssql/server:2022-latest
+    # A pinned SQL Server 2022 update, the same one CI tests against.
+    image: mcr.microsoft.com/mssql/server:2022-CU28-ubuntu-22.04
     environment:
       ACCEPT_EULA: "Y"
       MSSQL_SA_PASSWORD: ${MSSQL_SA_PASSWORD:?set MSSQL_SA_PASSWORD in your shell first}
@@ -44,7 +45,7 @@ services:
 
   db-init:
     # The same image, for its sqlcmd tool. Runs once and exits.
-    image: mcr.microsoft.com/mssql/server:2022-latest
+    image: mcr.microsoft.com/mssql/server:2022-CU28-ubuntu-22.04
     depends_on:
       sqlserver:
         condition: service_healthy
@@ -65,7 +66,11 @@ services:
     restart: "no"
 
   animals:
-    build: ./services/animals
+    build:
+      context: ./services/animals
+      args:
+        # Reported by GET /health as `version`; "dev" unless set in the shell.
+        GIT_SHA: ${GIT_SHA:-dev}
     depends_on:
       db-init:
         condition: service_completed_successfully
@@ -76,14 +81,21 @@ services:
     ports:
       - "8001:8000"
     healthcheck: &service-health
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health', timeout=3)"]
+      # GET /health answers 200 only when the service can read and write its
+      # own database. urlopen raises on a 503, which marks the container
+      # unhealthy. Python, because the slim image has no curl.
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=3)"]
       interval: 10s
       timeout: 5s
       retries: 10
       start_period: 30s
 
   donations:
-    build: ./services/donations
+    build:
+      context: ./services/donations
+      args:
+        # Reported by GET /health as `version`; "dev" unless set in the shell.
+        GIT_SHA: ${GIT_SHA:-dev}
     depends_on:
       db-init:
         condition: service_completed_successfully
@@ -105,7 +117,11 @@ services:
     healthcheck: *service-health
 
   enquiries:
-    build: ./services/enquiries
+    build:
+      context: ./services/enquiries
+      args:
+        # Reported by GET /health as `version`; "dev" unless set in the shell.
+        GIT_SHA: ${GIT_SHA:-dev}
     depends_on:
       db-init:
         condition: service_completed_successfully
