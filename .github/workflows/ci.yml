@@ -1,0 +1,100 @@
+# Continuous integration: lint, test and build every service.
+#
+# Runs on every push to a branch other than main, and on every pull request,
+# so nothing reaches main untested. On main, cd.yml calls this same workflow
+# (workflow_call) before deploying, so it does not also run here twice.
+# Nothing in this workflow touches Azure or any secret.
+
+name: CI
+
+on:
+  push:
+    branches-ignore: [main]
+  pull_request:
+  workflow_call:
+
+# Read the code, nothing else. Jobs that need more ask for it themselves.
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: test (${{ matrix.service }})
+    runs-on: ubuntu-24.04
+    strategy:
+      # One service failing must not hide the results of the other two.
+      fail-fast: false
+      matrix:
+        service: [animals, donations, enquiries]
+        # CI-ONLY password for the throwaway SQL Server below. That server
+        # exists only inside this job's runner for a few minutes, holds only
+        # test data, and is unreachable from outside. Never reuse this value
+        # anywhere else. It is written once here, as a one-value matrix entry,
+        # because a service container's settings cannot read workflow `env`.
+        ci-sa-password: ["CiOnly-Throwaway-Sql-1"]
+    services:
+      sqlserver:
+        image: mcr.microsoft.com/mssql/server:2022-CU28-ubuntu-22.04
+        env:
+          ACCEPT_EULA: "Y"
+          MSSQL_SA_PASSWORD: ${{ matrix.ci-sa-password }}
+        ports:
+          - 1433:1433
+        # The job's steps start only once this check passes, so the tests
+        # never race a server that is still starting.
+        options: >-
+          --health-cmd "/opt/mssql-tools18/bin/sqlcmd -C -S localhost -U sa -P \"$MSSQL_SA_PASSWORD\" -Q 'SELECT 1' -b -o /dev/null"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 20
+          --health-start-period 20s
+    defaults:
+      run:
+        working-directory: services/${{ matrix.service }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          # Reuse downloaded packages between runs; the cache key changes
+          # whenever this service's requirements.txt does.
+          cache: pip
+          cache-dependency-path: services/${{ matrix.service }}/requirements.txt
+
+      - name: Install
+        run: pip install -r requirements.txt
+
+      - name: Lint
+        run: ruff check .
+
+      - name: Test, failing below 70% coverage
+        env:
+          # The tests create their own throwaway database on this server and
+          # drop it at the end (tests/conftest.py).
+          TEST_SQLSERVER_URL: mssql://sa:${{ matrix.ci-sa-password }}@localhost:1433/master
+        run: pytest --cov --cov-report=term-missing --cov-fail-under=70
+
+  build:
+    name: build image (${{ matrix.service }})
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        service: [animals, donations, enquiries]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      # Builds the image exactly as CD will, but keeps it: a Dockerfile that
+      # does not build fails the pipeline here, before anything is deployed.
+      - uses: docker/build-push-action@v6
+        with:
+          context: services/${{ matrix.service }}
+          push: false
+          # Without this, the image gets an extra attestation entry that Azure
+          # Container Apps cannot pull (the setup guide's warning).
+          provenance: false
+          build-args: |
+            GIT_SHA=${{ github.sha }}
