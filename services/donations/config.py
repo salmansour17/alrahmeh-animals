@@ -22,6 +22,7 @@ BIND_HOST = "0.0.0.0"
 
 SERVICE = "donations"
 DEFAULT_PORT = 8000
+DEFAULT_VERSION = "dev"
 # Where donors are sent back to after Stripe Checkout: the UI's origin, not this
 # service's. The default is the Vite dev server; a deployment sets the static
 # website's address.
@@ -65,6 +66,9 @@ class Config:
     animals_timeout_s: float = DEFAULT_ANIMALS_TIMEOUT_S
     # Website origins allowed to call this service from a browser (cors.py).
     cors_origins: frozenset[str] = frozenset()
+    # The git commit this build came from, set at image build time (GIT_SHA);
+    # "dev" when running from a checkout. Reported by GET /health.
+    version: str = DEFAULT_VERSION
     service: str = SERVICE
 
 
@@ -79,6 +83,7 @@ def load_config() -> Config:
         # than falling back to a value an attacker could guess.
         admin_password=os.environ.get("ADMIN_PASSWORD") or None,
         cors_origins=_read_cors_origins(),
+        version=os.environ.get("GIT_SHA", "").strip() or DEFAULT_VERSION,
         stripe_secret_key=os.environ.get("STRIPE_SECRET_KEY") or None,
         stripe_webhook_secret=os.environ.get("STRIPE_WEBHOOK_SECRET") or None,
         public_base_url=_read_public_base_url(),

@@ -164,20 +164,22 @@ class Database:
     def name(self) -> str:
         return self._settings.database
 
-    def connect(self) -> Any:
+    def connect(self, retry: bool = True) -> Any:
         """Open a connection, retrying with backoff while the database wakes up.
 
         A new connection per unit of work rather than one shared connection: a
         connection cannot safely serve two requests at once, and the server
-        handles requests on several threads.
+        handles requests on several threads. retry=False makes one attempt
+        only, for the health check, which must answer quickly either way.
         """
+        attempts = self._attempts if retry else 1
         delay = self._first_delay_s
-        for attempt in range(1, self._attempts + 1):
+        for attempt in range(1, attempts + 1):
             try:
                 return self._open()
             except pymssql.Error as error:
                 number = _error_number(error)
-                if number not in RETRYABLE_ERRORS or attempt == self._attempts:
+                if number not in RETRYABLE_ERRORS or attempt == attempts:
                     raise
                 # The error number only: the message can include the host and
                 # user, and none of it helps more than the number does.
@@ -213,14 +215,14 @@ class Database:
         return self._connect(**options)
 
     @contextmanager
-    def unit_of_work(self) -> Iterator[Connection]:
+    def unit_of_work(self, retry: bool = True) -> Iterator[Connection]:
         """Run a block inside one transaction, then commit or roll back.
 
         Committing on the way out and rolling back on an exception means a
         half-applied write cannot survive an error, and callers never have to
         remember to commit.
         """
-        raw = self.connect()
+        raw = self.connect(retry=retry)
         try:
             yield Connection(raw)
             raw.commit()
@@ -229,6 +231,21 @@ class Database:
             raise
         finally:
             raw.close()
+
+    def check_read_write(self) -> None:
+        """Prove the service can write to and read from its own database, for
+        GET /health. Raises if it cannot.
+
+        It moves the timestamp on the single row of health_probe (created by a
+        migration) and reads it back, so the table never grows. One attempt,
+        no retries: a database that is still waking up should show as not
+        ready, quickly, rather than hold the health check for a minute.
+        """
+        with self.unit_of_work(retry=False) as connection:
+            connection.execute("UPDATE health_probe SET checked_at = SYSUTCDATETIME() WHERE id = 1")
+            row = connection.execute("SELECT checked_at FROM health_probe WHERE id = 1").fetchone()
+        if row is None:
+            raise RuntimeError("health_probe has no row")
 
     def table_names(self) -> list[str]:
         """Tables currently present in this service's database."""

@@ -34,7 +34,7 @@ def _preflight(client, origin, method="POST", headers="content-type"):
 
 
 def test_the_website_may_read(site):
-    response = site.get("/api/health", headers={"Origin": WEBSITE})
+    response = site.get("/health", headers={"Origin": WEBSITE})
     assert response.headers["Access-Control-Allow-Origin"] == WEBSITE
     assert "Origin" in response.headers["Vary"]
     assert "Access-Control-Allow-Credentials" not in response.headers
@@ -43,7 +43,7 @@ def test_the_website_may_read(site):
 def test_another_origin_gets_no_permission(site):
     """The answer still comes back (CORS is the browser's rule, not the
     server's), but without the header the browser will not hand it over."""
-    response = site.get("/api/health", headers={"Origin": ELSEWHERE})
+    response = site.get("/health", headers={"Origin": ELSEWHERE})
     assert response.status_code == 200
     assert "Access-Control-Allow-Origin" not in response.headers
 
@@ -66,14 +66,14 @@ def test_a_preflight_from_another_origin_is_refused(site):
 
 
 def test_without_cors_origins_no_browser_origin_is_allowed(client):
-    assert "Access-Control-Allow-Origin" not in client.get("/api/health", headers={"Origin": WEBSITE}).headers
+    assert "Access-Control-Allow-Origin" not in client.get("/health", headers={"Origin": WEBSITE}).headers
     assert _preflight(client, WEBSITE).status_code == 403
 
 
 def test_a_plain_options_request_is_not_mistaken_for_a_preflight(site):
     """Without Access-Control-Request-Method it is not a preflight, so it goes
     to Flask's normal handling."""
-    assert site.options("/api/health", headers={"Origin": WEBSITE}).status_code == 200
+    assert site.options("/health", headers={"Origin": WEBSITE}).status_code == 200
 
 
 @pytest.mark.parametrize(

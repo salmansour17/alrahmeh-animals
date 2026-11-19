@@ -21,6 +21,7 @@ BIND_HOST = "0.0.0.0"
 
 SERVICE = "enquiries"
 DEFAULT_PORT = 8000
+DEFAULT_VERSION = "dev"
 
 
 @dataclass(frozen=True)
@@ -39,6 +40,9 @@ class Config:
     admin_password: str | None = field(default=None, repr=False)
     # Website origins allowed to call this service from a browser (cors.py).
     cors_origins: frozenset[str] = frozenset()
+    # The git commit this build came from, set at image build time (GIT_SHA);
+    # "dev" when running from a checkout. Reported by GET /health.
+    version: str = DEFAULT_VERSION
     service: str = SERVICE
 
 
@@ -51,6 +55,7 @@ def load_config() -> Config:
         database_url=os.environ.get("DATABASE_URL") or None,
         admin_password=os.environ.get("ADMIN_PASSWORD") or None,
         cors_origins=_read_cors_origins(),
+        version=os.environ.get("GIT_SHA", "").strip() or DEFAULT_VERSION,
     )
 
 

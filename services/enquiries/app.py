@@ -83,10 +83,24 @@ def _register_meta_routes(app: Flask) -> None:
     """Endpoints that describe the service rather than its domain."""
     database: Database = app.config["DATABASE"]
 
-    @app.get("/api/health")
+    @app.get("/health")
     def health():
-        """Liveness probe. Public, so it reveals nothing about the host."""
-        return jsonify(status="ok")
+        """200 when this service can read and write its own database, 503 when
+        it cannot. It reflects this service only, so one service being
+        down never marks another unhealthy. Public, so it says nothing about
+        why: the reason goes to the log, by error number only.
+
+        The platform's probes and the deploy pipeline call this. `version` is
+        the git commit the image was built from (GIT_SHA), "dev" otherwise.
+        """
+        version = app.config["APP_CONFIG"].version
+        try:
+            database.check_read_write()
+        except Exception as error:  # noqa: BLE001 (any failure means not healthy)
+            number = error.args[0] if error.args and isinstance(error.args[0], int) else type(error).__name__
+            logger.warning("Health check failed: database not readable and writable (%s)", number)
+            return jsonify(status="error", db="error", version=version), 503
+        return jsonify(status="ok", db="ok", version=version)
 
     @app.get("/api/meta/schema")
     @require_admin
