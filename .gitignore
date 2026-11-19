@@ -28,3 +28,11 @@ ui/dist/
 # OS
 .DS_Store
 Thumbs.db
+
+# Terraform: downloaded providers and any local state. The lock file
+# (infra/.terraform.lock.hcl) IS committed, so CI and CD use the exact provider
+# version that was validated.
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
