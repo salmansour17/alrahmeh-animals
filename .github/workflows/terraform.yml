@@ -1,0 +1,38 @@
+# Checks the Terraform in infra/ on every push and pull request: formatting
+# and validity. Neither step talks to Azure: `init -backend=false` downloads
+# the provider pinned in infra/.terraform.lock.hcl and skips the state file,
+# so this runs without any credentials. cd.yml calls it before deploying.
+
+name: Terraform
+
+on:
+  push:
+    branches-ignore: [main]
+  pull_request:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: terraform fmt and validate
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: infra
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.13.4
+
+      - name: Formatting
+        run: terraform fmt -check -diff
+
+      - name: Download the pinned provider, without the state backend
+        run: terraform init -backend=false -input=false
+
+      - name: Validate
+        run: terraform validate
