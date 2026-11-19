@@ -1,0 +1,37 @@
+# Checks that the system's descriptions match each other and the code:
+# system.yaml against system.schema.json, each openapi.yaml against the
+# OpenAPI 3 specification, the call from donations to animals on both sides,
+# and every environment variable the services read. See
+# contracts/check_contracts.py for the full list.
+#
+# A workflow of its own rather than another job in ci.yml, so each file has one
+# job to explain. It runs on the same events as CI, and cd.yml calls both.
+
+name: Contracts
+
+on:
+  push:
+    branches-ignore: [main]
+  pull_request:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  contracts:
+    name: system.yaml and OpenAPI
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      # Pinned, and installed for this job only: no service depends on them.
+      - name: Install the validators
+        run: pip install jsonschema==4.25.1 openapi-spec-validator==0.7.2 pyyaml==6.0.3
+
+      - name: Check
+        run: python contracts/check_contracts.py

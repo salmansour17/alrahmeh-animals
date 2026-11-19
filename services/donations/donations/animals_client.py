@@ -36,6 +36,13 @@ logger = logging.getLogger(__name__)
 # absorb the occasional slow name lookup.
 _WORKERS = ThreadPoolExecutor(max_workers=4, thread_name_prefix="animals-client")
 
+# The one endpoint this service calls on the animals service, and what each of
+# its answers means here. contracts/check_contracts.py compares these with the
+# animals service's openapi.yaml, so neither side can change without the other.
+ANIMAL_METHOD = "GET"
+ANIMAL_PATH = "/api/animals/{animal_id}"
+ANSWERS = {200: True, 404: False}
+
 
 class HttpAnimalDirectory:
     """Answers "does this animal exist?" with GET /api/animals/<id> on the
@@ -56,16 +63,14 @@ class HttpAnimalDirectory:
 
     def exists(self, animal_id: int) -> bool:
         deadline = time.monotonic() + self._timeout_s
-        url = f"{self._base_url}/api/animals/{int(animal_id)}"
+        url = self._base_url + ANIMAL_PATH.format(animal_id=int(animal_id))
         try:
             status = _get_status(url, deadline)
         except AnimalsUnavailable as error:
             logger.warning("Animals service unavailable while checking animal %d: %s", animal_id, error)
             raise
-        if status == 200:
-            return True
-        if status == 404:
-            return False
+        if status in ANSWERS:
+            return ANSWERS[status]
         logger.warning("Animals service answered %d for animal %d", status, animal_id)
         raise AnimalsUnavailable(f"animals service answered {status}")
 

@@ -3,13 +3,15 @@ database, 503 otherwise, with the build's git commit as `version`."""
 
 from __future__ import annotations
 
+import time
 from dataclasses import replace
 
 import pymssql
+import pytest
 
 from app import create_app
 from config import load_config
-from db import ConnectionSettings, Database
+from db import HEALTH_LOGIN_TIMEOUT_S, ConnectionSettings, Database
 
 
 class _Unreachable:
@@ -76,3 +78,34 @@ def test_version_comes_from_git_sha_and_defaults_to_dev(monkeypatch):
     assert load_config().version == "3f2a9c1e"
     monkeypatch.setenv("GIT_SHA", "  ")
     assert load_config().version == "dev"
+
+
+def test_the_health_check_uses_a_short_login_timeout(config):
+    """Probes wait only seconds; a ten-second login attempt would outlast them."""
+    database, connect = _down(20009)
+    seen = []
+    original = connect.__call__
+
+    def recording(**options):
+        seen.append(options["login_timeout"])
+        return original(**options)
+
+    database._connect = recording
+    create_app(config, database=database).test_client().get("/health")
+    assert seen == [HEALTH_LOGIN_TIMEOUT_S]
+
+
+def test_the_health_check_answers_by_its_deadline_whatever_the_database_does(config):
+    """A connection attempt that hangs (as a lookup of a stopped container's
+    name does inside Docker) cannot hold the health check past its deadline."""
+    settings = ConnectionSettings(host="h", port=1433, user="u", database="d", password="p")
+
+    def hangs(**options):
+        time.sleep(3)
+        raise pymssql.OperationalError(20009, b"too late")
+
+    database = Database(settings, connect=hangs)
+    started = time.monotonic()
+    with pytest.raises(TimeoutError):
+        database.check_read_write(deadline_s=0.3)
+    assert time.monotonic() - started < 1.0
