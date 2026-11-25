@@ -80,6 +80,11 @@ jobs:
       - name: Lint
         run: ruff check .
 
+      # The code is kept in ruff's format (the pre-commit hook applies it);
+      # this fails if a change was committed without it.
+      - name: Formatting
+        run: ruff format --check .
+
       - name: Test, failing below 70% coverage
         env:
           # The tests create their own throwaway database on this server and
