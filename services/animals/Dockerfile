@@ -1,8 +1,11 @@
 # The animals service. Build from this folder:  docker build -t animals services/animals
 
-# A specific Python release on Debian bookworm, never `latest`, so a rebuild
-# next month gets the same interpreter. "slim" leaves out compilers and docs.
-FROM python:3.13.9-slim-bookworm
+# A specific Python release on Debian bookworm, never `latest`. The tag says
+# which release; the digest after @ fixes the exact bytes, so even a re-pushed
+# tag cannot change what we build on. It is the digest of the multi-platform
+# index, so the same line builds on amd64 (Azure) and arm64 (some laptops).
+# "slim" leaves out compilers and docs. Dependabot proposes updates to both.
+FROM python:3.13.9-slim-bookworm@sha256:b685a4fa58bb19d1814d78a1ec0f0208f351452724f78b20212c984d6e124a34
 
 # No .pyc files in the image, log lines reach `docker logs` straight away, and
 # pip keeps no download cache in the layer.
