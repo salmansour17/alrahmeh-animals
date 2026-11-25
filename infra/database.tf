@@ -1,10 +1,12 @@
 # One logical SQL server holding one database per service.
 #
 # The three databases themselves are created by the pipeline, not here (cd.yml,
-# step "Create the databases on the free offer"): the azurerm provider has no
-# argument for Azure SQL's free offer, and without it each database would be
-# billed (ADR-8). Each service reaches only its own database, through a user
-# created inside that database during the bootstrap.
+# step "Create the databases if missing"), with the Azure CLI. That was chosen
+# for Azure SQL's free offer, which this provider cannot set; Azure then
+# refused the free offer for this subscription, so they are ordinary
+# serverless databases, and they stay with the CLI because they already exist
+# (ADR-8). Each service reaches only its own database, through a user created
+# inside that database during the bootstrap.
 
 resource "azurerm_mssql_server" "main" {
   name                = "${var.prefix}-sql"

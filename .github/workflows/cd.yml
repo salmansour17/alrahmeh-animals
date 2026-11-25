@@ -24,7 +24,7 @@
 #   Variables
 #     PREFIX          IE username with dots replaced by hyphens
 #     LOCATION        Azure region for the Container Apps
-#     SQL_LOCATION    Azure region for the SQL server (where the free offer exists)
+#     SQL_LOCATION    Azure region for the SQL server (where this subscription may create one)
 #     RESOURCE_GROUP  rg-<PREFIX>, created by the bootstrap
 #     UI_STORAGE      <PREFIX without hyphens>ui, created by the bootstrap
 #
@@ -143,13 +143,14 @@ jobs:
           terraform apply -auto-approve -input=false
           terraform output -json > "$RUNNER_TEMP/outputs.json"
 
-      # The azurerm provider cannot set Azure SQL's free offer (ADR-8), so the
-      # databases are created here instead, once: each is skipped if it
-      # already exists, and nothing here ever deletes or recreates one. Free
-      # offer, General Purpose serverless Gen5, 0.5 to 1 vCore, locally
-      # redundant backups. The free offer fixes auto-pause at 60 minutes and
-      # the size at 32 GB, so neither is passed.
-      - name: Create the databases on the free offer
+      # The databases are created here, once, with the Azure CLI: each is
+      # skipped if it already exists, and nothing here ever deletes or
+      # recreates one. General Purpose serverless Gen5, 0.5 to 1 vCore,
+      # paused after 15 idle minutes, at most 1 GB, locally redundant
+      # backups. Not on the free offer, which Azure refuses this subscription
+      # in every region it may use (ADR-8): a paused database costs only its
+      # storage, an awake one about $0.29 an hour.
+      - name: Create the databases if missing
         run: |
           server=$(jq -r '.sql_server.value' "$RUNNER_TEMP/outputs.json")
           for database in $(jq -r '.databases.value[]' "$RUNNER_TEMP/outputs.json"); do
@@ -159,8 +160,8 @@ jobs:
               az sql db create --resource-group "${{ vars.RESOURCE_GROUP }}" --server "$server" --name "$database" \
                 --edition GeneralPurpose --family Gen5 --compute-model Serverless \
                 --capacity 1 --min-capacity 0.5 --backup-storage-redundancy Local \
-                --use-free-limit true --free-limit-exhaustion-behavior AutoPause --output none
-              echo "$database created on the free offer"
+                --auto-pause-delay 15 --max-size 1GB --output none
+              echo "$database created"
             fi
           done
 
