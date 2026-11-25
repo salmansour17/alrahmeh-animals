@@ -47,6 +47,14 @@ the same number below the table.
 | 2026-11-18 / `feat/containers` `docker-compose.yml` | Claude Code (Opus 5.5) | Step 11 of the day's prompt | Accepted | `sqlserver` with a healthcheck and a data volume; one-off `db-init` running `db/init.sql`; the three services waiting on `db-init` with `condition: service_completed_successfully`; one-off `ui-build` (stock `node:22.12.0-alpine`) writing the build and `config.js` into a volume; `web` (stock `nginx:1.27.3-alpine`) serving it with `ui/nginx.conf`. Every password is `${VAR:?message}` from the shell. | ⚠️ TODO (me): the healthcheck line uses `$$MSSQL_SA_PASSWORD` with two dollar signs. What would compose do with a single `$`, and why does that matter for the password? |
 | 2026-11-19 / `feat/ci` `.github/workflows/ci.yml` | Claude Code (Opus 5.5) | Step 2 of the day's prompt ([the prompt for 2026-11-19](#prompt-for-2026-11-19-verbatim)) | Accepted | CI on every push to a branch other than main, on every pull request, and when CD calls it. One test job per service (a matrix) with a SQL Server 2022-CU28 service container that must pass its healthcheck first; each installs, runs `ruff check .`, and runs the tests with `--cov-fail-under=70`. A build job builds the three images without pushing (`provenance: false`, `GIT_SHA` build argument). `permissions: contents: read`, pip cached per service. The throwaway SQL Server's password is a CI-only value in a one-value matrix entry, because a service container cannot read workflow `env`. Checked with actionlint; the lint fixes it needs are in the same branch (ruff 0.14.5, 120 columns, first-party imports grouped). | ⚠️ TODO (me): the test job has `--cov-fail-under=70` on the pytest line. What exactly makes the job fail, and why is a failing job enough to stop a deploy? |
 | 2026-11-19 / `feat/health-and-contract` `.github/workflows/contracts.yml` | Claude Code (Opus 5.5) | Step 6 of the day's prompt ([the prompt for 2026-11-19](#prompt-for-2026-11-19-verbatim)) | Modified | My prompt asked for the contract checks as a CI job; it put them in a workflow of their own so `ci.yml`, already on the first branch, would not be edited again, and cd.yml calls both. The job installs jsonschema 4.25.1, openapi-spec-validator 0.7.2 and pyyaml 6.0.3 for itself only and runs `contracts/check_contracts.py`: `system.yaml` against `system.schema.json`, each `openapi.yaml` against the OpenAPI 3 specification, the donations-to-animals call against both sides, and the environment variables each service reads against `system.yaml`. Its first run caught unquoted commas in `system.yaml` that YAML was reading as extra keys. Checked that it fails on a renamed endpoint and on an unlisted variable. | ⚠️ TODO (me): `pip install jsonschema==4.25.1 openapi-spec-validator==0.7.2 pyyaml==6.0.3` runs in this job only. Why are these not in any service's `requirements.txt`? |
+| 2026-11-19 / `feat/terraform-cd` `infra/main.tf` | Claude Code (Opus 5.5) | Step 7 of the day's prompt ([the prompt for 2026-11-19](#prompt-for-2026-11-19-verbatim)) | Modified | The `terraform` block (Terraform 1.13+, azurerm pinned `~> 4.50` and locked at 4.81.0 in `.terraform.lock.hcl`), the `azurerm` state backend in the website storage account's `tfstate` container, the provider block, and read-only data sources for the resource group and storage account the bootstrap creates. My prompt said "no provider blocks"; it explained the provider refuses to run without one (`features {}` is required), so the block exists only to sign in with OIDC and to register nothing. | ⚠️ TODO (me): `resource_provider_registrations = "none"` in the provider block. What would Terraform try to do without this line, and why would the pipeline's identity be refused? |
+| 2026-11-19 / `feat/terraform-cd` `infra/variables.tf` | Claude Code (Opus 5.5) | Step 7 of the day's prompt | Accepted | Every value that differs per deployment is a variable: prefix, the two regions, registry, an image tag per service, and the secrets (SQL admin password, the three database passwords, the staff password, the optional Stripe values), each marked `sensitive`. The pipeline sets them as `TF_VAR_*` environment variables. | ⚠️ TODO (me): `sensitive = true` on `sql_admin_password`. What does it change in Terraform's output, and what does it not protect? |
+| 2026-11-19 / `feat/terraform-cd` `infra/database.tf` | Claude Code (Opus 5.5) | Step 7 of the day's prompt | Modified | The SQL server (TLS 1.2 minimum, public access with a firewall), the "allow Azure services" firewall rule, and each service's connection string built from its own user and password. The databases are not here: the provider documentation has no argument for the free offer, so, as I had decided in advance, cd.yml creates them with `az sql db create --use-free-limit true`. | ⚠️ TODO (me): the firewall rule has `start_ip_address = "0.0.0.0"` and `end_ip_address = "0.0.0.0"`. What does that range mean to Azure SQL, and why does it not open the server to everyone? |
+| 2026-11-19 / `feat/terraform-cd` `infra/container_apps.tf` | Claude Code (Opus 5.5) | Step 7 of the day's prompt | Accepted | The Container Apps environment (no Log Analytics workspace; logs are streamed) and the three apps from one resource with `for_each` over what differs per service. Each: Single revision mode, HTTPS-only external ingress on 8000, `min_replicas = 0`, `max_replicas = 1`, an explicit HTTP scale rule, 0.25 vCPU and 0.5 GiB, secrets in `secret` blocks referenced by `secret_name`, a startup probe that allows 5 minutes and a readiness probe on `/health`, and deliberately no liveness probe. Donations finds animals at its predictable address, name plus the environment's domain. | ⚠️ TODO (me): there is a readiness probe on `/health` but deliberately no liveness probe. What would a liveness probe on `/health` do while the database is paused? |
+| 2026-11-19 / `feat/terraform-cd` `infra/outputs.tf` | Claude Code (Opus 5.5) | Step 7 of the day's prompt | Accepted | Outputs the pipeline reads after `apply`: each service's HTTPS address (for `config.js` and the health check), the website's address, the storage account, the SQL server and the database names (for the step that creates them). | ⚠️ TODO (me): `service_urls` is built from `app.ingress[0].fqdn`. Where does that address come from, and why can the pipeline not know it before `terraform apply` has run once? |
+| 2026-11-19 / `feat/terraform-cd` `.github/workflows/terraform.yml` | Claude Code (Opus 5.5) | Step 7 of the day's prompt | Accepted | `terraform fmt -check -diff`, then `terraform init -backend=false`, then `terraform validate`, with Terraform 1.13.4, on every push and pull request; cd.yml calls it too. Needs no credentials. Locally, both checks were run in the `hashicorp/terraform:1.13.4` image and passed. | ⚠️ TODO (me): why does `terraform init -backend=false` let this job run without any Azure credentials, and what does it skip? |
+| 2026-11-19 / `feat/terraform-cd` `.github/workflows/cd.yml` | Claude Code (Opus 5.5) | Step 8 of the day's prompt ([the prompt for 2026-11-19](#prompt-for-2026-11-19-verbatim)) | Accepted | Runs only on pushes to main, one deploy at a time (`concurrency`, never cancelled halfway), `permissions: {}` with each job asking for its own. CI, Contracts and Terraform run first; images are pushed to GHCR tagged with the commit SHA (`provenance: false`, `GIT_SHA` build argument); then one deploy job signs in with OIDC, runs `terraform apply`, creates any missing database on the free offer with `az`, builds the website with a `config.js` from Terraform's outputs, uploads it to `$web` (assets cached a year, `index.html` and `config.js` no-cache), and polls `/health` on every service for up to five minutes. Every secret and variable it needs is listed at the top and in `docs/deployment.md`. Not run: nothing touches Azure until the bootstrap exists. I caught one thing in review: a quoting fix had turned `'$web'` into `"$web"`, which the shell would read as an empty variable; it is now `"\$web"`. | ⚠️ TODO (me): the images job has `needs: [ci, contracts, terraform-check]`. What happens to a push to main whose tests fail, and which line makes that true? |
+| 2026-11-19 / `feat/ci`, `feat/health-and-contract`, `feat/terraform-cd` | Claude Code (Opus 5.5) | The day's prompt: CI, then health and contract, then Terraform and CD, nothing against Azure. Full prompt: [the prompt for 2026-11-19](#prompt-for-2026-11-19-verbatim). | Modified | Three stacked branches, eight commits, kept separate with a snapshot of the changed files at each commit point. Deviations it told me about: the contract checks became their own workflow, `terraform.yml` was added so CI checks Terraform, and the provider block exists because azurerm requires one. Found and fixed while verifying, not asked for: `/health` took 14.8 s with the database stopped (Docker's name lookup for a stopped container), now about 4.6 s with a 5-second deadline and a 3-second login timeout; and `ARG GIT_SHA` moved below the dependency install so a new commit does not reinstall every package. The animals call's deadline fix took the real Docker case from 3.9 s to 2.01 s. Tests on SQL Server: animals 255, donations 250, enquiries 90, 100% each; ruff, actionlint, `terraform fmt`/`validate` and the contract checks all pass. Not run: anything against Azure. | ⚠️ TODO (me): the deadline fix in `animals_client.py` runs the request in a worker thread and waits with `future.result(timeout=...)`. What was the bug with `urlopen(timeout=2)` alone, and what happens to the worker thread when the deadline passes? |
 
 ---
 
@@ -2240,4 +2248,102 @@ GROUND RULES
 
 WHEN YOU FINISH
 Give me a short report: what's done per step, test and coverage numbers per service, anything you skipped or couldn't verify, and the exact commands I need to run locally (including which env vars I must export).
+```
+
+## Prompt for 2026-11-19 (verbatim)
+
+```text
+You're continuing in my repo for the university software development project: three Python services (animals, donations and a third one, check the repo), a static website, SQL Server migrations and containers already done on earlier branches. Today's work is three branches in order: CI, then health and contract, then Terraform and CD. Read before you write.
+
+BEFORE TOUCHING ANYTHING
+- Check which earlier branches are merged. Branch feat/ci from the latest finished work (main if everything is merged, otherwise feat/containers), then stack feat/health-and-contract on feat/ci and feat/terraform-cd on feat/health-and-contract. Tell me which base you used.
+- Re-read the existing Dockerfiles, compose file, db.py and migrate.py, the tests, the ADRs, the setup guide and the AI_USAGE format.
+- Find the brief in the repo (look for the document containing section 8a, the system.json/system sample, and any Azure naming rules). If you can't find it, stop and tell me instead of guessing the sample.
+- Give me a short plan with anything ambiguous, then continue unless something truly blocks you.
+
+GROUND RULES
+- Nothing runs against Azure. No `az login`, no `terraform apply`, no `terraform plan` that needs credentials. Terraform work is written and checked locally only.
+- No secrets in committed files. Placeholders where my prefix or IDs are needed, for example `<PREFIX>`, and list each placeholder in your final report.
+- Pin versions: Docker images by explicit tag, GitHub Actions by major version (or SHA), ruff by exact version.
+- Do not weaken checks to get green. If you silence a lint rule or lower a threshold, justify it in a comment and in your report.
+- Write prose (docs, ADRs, comments, commit messages) in a natural, direct tone. No em dashes.
+- Don't invent facts in ADR-8 or any doc. Only state what the code and Terraform actually define.
+- COMMIT BUDGET: no more than 8 commits in total across all three branches today. Suggested split: feat/ci 2, feat/health-and-contract 3, feat/terraform-cd 3. Group steps into commits sensibly, and put the AI_USAGE rows into the commit that adds the files they cover.
+- Run the tests after each step. Report failures and skipped checks honestly.
+
+DECISIONS ALREADY MADE (follow these)
+- The health check's write goes to a new tiny `health_probe` table, not to a real domain table with a rollback.
+- OpenAPI files are written by hand, with a test comparing them to Flask's route list. No generator plugin.
+- The SQL server admin login uses a password stored as the GitHub secret `SQL_ADMIN_PASSWORD` (passed to Terraform as a sensitive variable). No Entra admin.
+- If the Terraform provider can't set the Azure SQL free offer, fall back to an `az` step in the pipeline that sets it on the databases, and say so clearly in the report and in ADR-8.
+
+=== BRANCH feat/ci ===
+
+1. Lint with ruff.
+   - Pin ruff in each service's `requirements.txt`.
+   - Put config in a `ruff.toml` inside each service folder (a config file, not a manifest).
+   - Run it and fix whatever it flags. Prefer fixing the code over ignoring rules.
+
+2. Create `.github/workflows/ci.yml`.
+   - Triggers: `push` on all branches except `main` (`branches-ignore: [main]`), `pull_request`, and `workflow_call` so CD can call it.
+   - One job per service. Each uses a SQL Server service container (pinned `mcr.microsoft.com/mssql/server` tag, with a healthcheck) and does: install, ruff check (and format check if the repo uses it), run the tests against the container, fail below 70% coverage.
+   - The SA password for the throwaway CI container is a CI-only value, defined once as workflow-level env and labeled as such. It must never be reused anywhere else. Flag this in your report so I can veto it.
+   - Add a job that builds all three images with `docker/build-push-action`, `push: false`, `provenance: false`, passing `GIT_SHA` as a build arg (this arg is added in step 3, so wire it in once that exists).
+   - Set minimal `permissions` (contents: read) and cache pip where it helps.
+
+=== BRANCH feat/health-and-contract ===
+
+3. `GET /health` on each service, replacing `/api/health` (update every reference: website, compose, tests, docs).
+   - Returns 200 `{"status":"ok","db":"ok","version":"<git sha>"}` when the service can read and write its own database, and 503 otherwise (same JSON shape with `"status":"error"` and `"db":"error"`, no internals or exception text leaked).
+   - The write goes to a `health_probe` table created by a new migration in each service (tiny table, bounded size: upsert a single row, do not grow forever).
+   - The git sha comes from a build argument `GIT_SHA` in each Dockerfile, exposed as an env var, and is `"dev"` when not set. Compose passes it through.
+   - Update the compose healthchecks to use `/health`. The images are slim, so use a Python one-liner or similar for the check, not `curl`, unless curl is already installed.
+   - Tests cover healthy, DB-down (503), and the `dev` default.
+
+4. Fix the 3.9 s timeout. Find it in the donations service's call to the animals service. The whole call, including the name lookup, gets ONE deadline (compute a deadline once and pass the remaining time to each request, rather than a per-request timeout). Add a test with a deliberately slow lookup that proves the overall deadline holds. Explain in one or two sentences in your report what the bug was.
+
+5. Write `openapi.yaml` per service by hand (OpenAPI 3.x), including `/health`.
+   - Add a test per service that fails if a Flask route is missing from the OpenAPI file, or if an OpenAPI path or method has no Flask route. Ignore Flask's built-in `static` route and automatic HEAD/OPTIONS.
+   - The endpoints that donations calls on animals must match exactly between donations' client code, the animals Flask routes and animals' `openapi.yaml` (paths, methods, parameters, response codes). Add a test or check that makes drift fail.
+
+6. Create `system.schema.json` and `system.yaml`.
+   - Write `system.schema.json` from the brief's section 8a sample (none was provided as a file). Keep it faithful to that sample, and tell me about any field you had to interpret.
+   - `system.yaml` describes the three services, their environment variables (names only, never values), the calls between them, and the Azure resource names (placeholders such as `<PREFIX>` where my prefix is needed).
+   - Add a CI job (or steps) that validates `system.yaml` against `system.schema.json` and validates each `openapi.yaml` against the OpenAPI 3 specification (for example with `openapi-spec-validator` and `jsonschema`, pinned). Install these in the CI job only, not in the service images.
+
+=== BRANCH feat/terraform-cd ===
+
+7. Write `infra/*.tf`.
+   - A Container Apps environment and three Container Apps: min replicas 0, max replicas 1, HTTPS ingress, startup and readiness probes on `/health`, secrets as `secret` blocks (referenced from env vars via secret_name), images from GHCR by tag.
+   - An Azure SQL server with three serverless databases on the free offer, and the "allow Azure services" firewall rule (0.0.0.0 to 0.0.0.0).
+   - Everything is a variable: prefix, region, SQL region, image tags (one per service). The SQL admin password is a sensitive variable.
+   - Register NO providers (no `provider` blocks; the bootstrap does that). You may declare `required_providers` only if needed for validation, and tell me if you did.
+   - Check the current provider documentation for how to set the free offer on a database. If it can't be set, use the fallback decided above.
+   - Add outputs the CD needs (the three app FQDNs, the storage account static website info if the website is in scope of the Terraform, otherwise state clearly what the bootstrap must already provide).
+   - It must pass `terraform fmt -check` and `terraform validate` locally. If `terraform init` can't download providers in this environment, say so plainly, run what you can (`fmt -check`, and `validate` if possible), and do not claim a check passed that didn't run.
+
+8. Write `.github/workflows/cd.yml`, which only runs on `main`.
+   - Calls CI first (`uses: ./.github/workflows/ci.yml`) and everything else `needs` it.
+   - Signs in to Azure with OIDC (`azure/login`, with `id-token: write`), no client secrets.
+   - Builds and pushes the three images to GHCR tagged with the commit SHA (with `GIT_SHA` build arg, `provenance: false`), then runs `terraform apply -auto-approve` with the image tags and `SQL_ADMIN_PASSWORD` passed in.
+   - Builds the website with a generated `config.js` (service URLs from Terraform outputs) and uploads it to `$web` with cache headers: `config.js` and `index.html` no-cache, other assets long-lived.
+   - Polls `/health` on every service for up to 5 minutes and fails the run if any service doesn't return 200 with `"status":"ok"`.
+   - Uses a `concurrency` group so two deploys don't overlap, and minimal `permissions` per job.
+   - At the top of the file (as a comment) AND in a short doc, list every GitHub secret and variable it expects, with what each is for. Include the Terraform state backend settings if you used a backend.
+
+9. Write ADR-8 (deployment and infrastructure), based ONLY on what the Terraform and workflows define. Mark anything that depends on the first real deploy as "to confirm" (for example actual FQDNs, whether the free offer applied, cold start timing). Follow the existing ADR format and numbering.
+
+=== WRAP-UP ===
+
+110. AI_USAGE: you don't need to log every interaction, only the major ones. Add a single row for this task prompt itself (the prompt I gave you today), following the existing row format. Then add one row for each workflow file (ci.yml, cd.yml) and one for each `.tf` file, each with a question about one specific line of that file. Write the QUESTIONS ONLY. Do not write the answers, I'll answer them myself.
+
+11. Count your commits. It must be 8 or fewer across all three branches.
+
+WHEN YOU FINISH
+Give me a short report:
+- what's done per step and what's not;
+- test and coverage numbers per service;
+- which checks you could not run and why;
+- every placeholder I need to fill and every GitHub secret and variable I need to create;
+- the exact git commands per branch (create, push, and open the PR, in order), without running the pushes yourself.
 ```

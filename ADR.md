@@ -349,3 +349,88 @@ few hundred kilobytes each is tens of thousands of photos. Startup includes a
 migration check and, after an idle hour, possibly a minute of waiting for the
 database, which the website has to present as "starting up" rather than as an
 error (ADR-8).
+
+## 8. Serverless hosting on Azure, each concern its own piece of Terraform
+
+Date: 2026-11-19
+Status: Decided
+
+Context: The brief requires Azure Container Apps on the Consumption plan, Azure
+SQL Database serverless, a Storage static website and nothing that runs or
+costs money while the site is idle. My professor asked to see each deployment
+concern built as its own visible piece, not left to a tool that does
+everything. The pipeline signs in as a managed identity that is Contributor on
+one resource group only, so it cannot create that resource group, register
+resource providers, or grant roles. And everything scales to zero, so the first
+visit after a quiet hour finds a stopped container and possibly a paused
+database.
+
+Decision: Terraform in `infra/` defines the Container Apps environment, the
+three Container Apps and the SQL server with its firewall rule; a one-time,
+documented bootstrap (`docs/deployment.md`) creates the resource group, the
+storage account (website plus Terraform's state) and the pipeline's identity,
+which Terraform only reads. Each concern is a block I can point to:
+
+- Scaling and load: each app has `min_replicas = 0`, `max_replicas = 1` and an
+  explicit HTTP scale rule (`concurrent_requests = "10"`). Requests reach the
+  app through Container Apps' ingress, which also wakes it from zero.
+- Network and firewall: ingress is external and HTTPS-only
+  (`allow_insecure_connections = false`) because the browser calls every
+  service; CORS is enforced in each service's code for the website's origin
+  only, read from the storage account; the SQL server accepts only Azure
+  services (the 0.0.0.0 rule) and TLS 1.2 or newer, and each service connects
+  as a user that exists only in its own database.
+- Health: a startup probe on `/health` allows up to five minutes (30 checks,
+  10 s apart) for migrations and a paused database; a readiness probe keeps
+  traffic away from a replica whose database is unreachable. There is no
+  liveness probe on `/health`, because a paused database is not a reason to
+  restart a container.
+- Secrets: the connection strings, the staff password and the optional Stripe
+  keys are Container Apps `secret` blocks referenced by `secret_name`, fed from
+  GitHub secrets as sensitive Terraform variables; none is a plain
+  environment variable or in the repository.
+- Caching: built website assets are uploaded with a one-year immutable
+  `Cache-Control`, `index.html` and `config.js` with `no-cache`.
+
+The azurerm provider has no argument for Azure SQL's free offer, so the
+pipeline creates each database with `az sql db create --use-free-limit true
+--free-limit-exhaustion-behavior AutoPause` (General Purpose serverless Gen5,
+0.5 to 1 vCore, locally redundant backups) when it does not exist yet, and
+never touches one that does. Images go to GitHub Container Registry, tagged
+with the commit SHA.
+
+Alternatives considered: **Azure CLI commands for everything**, as the setup
+guide shows, would work, but each run would have to work out what already
+exists, and the configuration would be scattered through a script rather than
+declared in one place I can read. **The azapi provider** could set the free
+offer through Azure's REST API and keep the databases in Terraform; it was
+rejected for now as a second provider whose resource bodies are raw API JSON,
+for one setting. **Azure Container Registry** has a fixed monthly cost, which
+the brief rules out unless justified; GHCR is free. **A Log Analytics
+workspace** would keep the logs searchable but is another resource billed per
+GB; without it, the container logs are still streamed. **min_replicas = 1**
+would remove cold starts but run three containers all month.
+
+Consequences: Cost follows use. A Container App is billed while a replica
+runs and nothing while it is scaled to zero; the databases are on the free
+offer and pause after 60 minutes idle, and if the free allowance runs out they
+pause rather than bill; the website is storage and requests. The exact monthly
+figures are to confirm after a week of real use. The price is the cold start:
+after an idle hour, the first visitor waits while a container starts and its
+database resumes, which can take about a minute. `db.py` retries the
+connection with backoff for about a minute, the startup probe allows five, the
+pipeline's health check waits five, and the website must show "starting up"
+rather than an error (planned for Nov 21). A two-second deadline on the
+earmark check (ADR-6) may often expire while the animals service is waking;
+how often is to confirm on Azure. `max_replicas = 1` also means migrations at
+start-up never run twice at once, with `sp_getapplock` as a second guard. The
+real addresses, whether the free offer applied, and cold-start timings are to
+confirm on the first deploy.
+
+At a hundred times the traffic: raise `max_replicas` and the scale rule's
+threshold, and run migrations as a separate step before the new revision
+rolls out instead of at start-up; keep `min_replicas = 1` on the animals
+service so the earmark check stops meeting cold starts; move the databases off
+the free offer to a larger serverless or provisioned size, and pool
+connections instead of opening one per request; and put a CDN in front of the
+static website.

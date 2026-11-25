@@ -1,0 +1,221 @@
+# Continuous deployment: every push to main is tested, then deployed to Azure.
+#
+# Order: the three check workflows (CI, Contracts, Terraform) run first, and
+# nothing below runs unless all three pass on this same commit. Then the
+# images are pushed to GHCR tagged with the commit, Terraform updates Azure,
+# the databases are created if missing, the website is uploaded, and the run
+# fails unless every service answers /health with 200 within five minutes.
+#
+# What it expects in the repository's settings (Settings > Secrets and
+# variables > Actions); docs/deployment.md says how each is created.
+#
+#   Secrets
+#     AZURE_CLIENT_ID         client ID of the managed identity <PREFIX>-github
+#     AZURE_TENANT_ID         the Azure tenant (directory) ID
+#     AZURE_SUBSCRIPTION_ID   the Azure for Students subscription ID
+#     SQL_ADMIN_PASSWORD      the SQL server's administrator password
+#     ANIMALS_DB_PASSWORD     the animals service's database user's password
+#     DONATIONS_DB_PASSWORD   the donations service's database user's password
+#     ENQUIRIES_DB_PASSWORD   the enquiries service's database user's password
+#     ADMIN_PASSWORD          the staff portal password
+#     STRIPE_SECRET_KEY       optional: Stripe test-mode key; unset keeps card donations off
+#     STRIPE_WEBHOOK_SECRET   optional: Stripe webhook signing secret
+#
+#   Variables
+#     PREFIX          IE username with dots replaced by hyphens
+#     LOCATION        Azure region for the Container Apps
+#     SQL_LOCATION    Azure region for the SQL server (where the free offer exists)
+#     RESOURCE_GROUP  rg-<PREFIX>, created by the bootstrap
+#     UI_STORAGE      <PREFIX without hyphens>ui, created by the bootstrap
+#
+# Terraform keeps its state in the `tfstate` container of UI_STORAGE
+# (backend "azurerm" in infra/main.tf), reached with the same identity.
+
+name: CD
+
+on:
+  push:
+    branches: [main]
+
+# Two pushes in quick succession deploy one after the other, never at once,
+# and a deploy that has started is never cancelled halfway.
+concurrency:
+  group: deploy-main
+  cancel-in-progress: false
+
+# Nothing by default; each job asks for what it needs.
+permissions: {}
+
+jobs:
+  ci:
+    uses: ./.github/workflows/ci.yml
+    permissions:
+      contents: read
+
+  contracts:
+    uses: ./.github/workflows/contracts.yml
+    permissions:
+      contents: read
+
+  terraform-check:
+    uses: ./.github/workflows/terraform.yml
+    permissions:
+      contents: read
+
+  images:
+    name: push image (${{ matrix.service }})
+    needs: [ci, contracts, terraform-check]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write # push to GHCR with the workflow's own token
+    strategy:
+      matrix:
+        service: [animals, donations, enquiries]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/setup-buildx-action@v3
+
+      # Tagged with the commit, so every deploy names exactly the code it runs
+      # and an older commit can be redeployed by its tag.
+      - uses: docker/build-push-action@v6
+        with:
+          context: services/${{ matrix.service }}
+          push: true
+          provenance: false
+          build-args: |
+            GIT_SHA=${{ github.sha }}
+          tags: ghcr.io/${{ github.repository_owner }}/alrahmeh-${{ matrix.service }}:${{ github.sha }}
+
+  deploy:
+    name: deploy to Azure
+    needs: [images]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      id-token: write # lets azure/login and Terraform ask GitHub for an OIDC token
+    env:
+      # Terraform signs in with the same OIDC trust, no password.
+      ARM_USE_OIDC: "true"
+      ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+      ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      # Terraform's input variables (infra/variables.tf).
+      TF_VAR_prefix: ${{ vars.PREFIX }}
+      TF_VAR_location: ${{ vars.LOCATION }}
+      TF_VAR_sql_location: ${{ vars.SQL_LOCATION }}
+      TF_VAR_registry: ghcr.io/${{ github.repository_owner }}
+      TF_VAR_image_tags: '{"animals":"${{ github.sha }}","donations":"${{ github.sha }}","enquiries":"${{ github.sha }}"}'
+      TF_VAR_sql_admin_password: ${{ secrets.SQL_ADMIN_PASSWORD }}
+      TF_VAR_db_passwords: '{"animals":"${{ secrets.ANIMALS_DB_PASSWORD }}","donations":"${{ secrets.DONATIONS_DB_PASSWORD }}","enquiries":"${{ secrets.ENQUIRIES_DB_PASSWORD }}"}'
+      TF_VAR_admin_password: ${{ secrets.ADMIN_PASSWORD }}
+      TF_VAR_stripe_secret_key: ${{ secrets.STRIPE_SECRET_KEY }}
+      TF_VAR_stripe_webhook_secret: ${{ secrets.STRIPE_WEBHOOK_SECRET }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Sign in to Azure (OIDC, no password)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.13.4
+          # Plain terraform output, so `terraform output -json` can be piped.
+          terraform_wrapper: false
+
+      - name: Terraform apply
+        working-directory: infra
+        run: |
+          terraform init -input=false \
+            -backend-config="resource_group_name=${{ vars.RESOURCE_GROUP }}" \
+            -backend-config="storage_account_name=${{ vars.UI_STORAGE }}"
+          terraform apply -auto-approve -input=false
+          terraform output -json > "$RUNNER_TEMP/outputs.json"
+
+      # The azurerm provider cannot set Azure SQL's free offer (ADR-8), so the
+      # databases are created here instead, once: each is skipped if it
+      # already exists, and nothing here ever deletes or recreates one. Free
+      # offer, General Purpose serverless Gen5, 0.5 to 1 vCore, locally
+      # redundant backups. The free offer fixes auto-pause at 60 minutes and
+      # the size at 32 GB, so neither is passed.
+      - name: Create the databases on the free offer
+        run: |
+          server=$(jq -r '.sql_server.value' "$RUNNER_TEMP/outputs.json")
+          for database in $(jq -r '.databases.value[]' "$RUNNER_TEMP/outputs.json"); do
+            if az sql db show --resource-group "${{ vars.RESOURCE_GROUP }}" --server "$server" --name "$database" --output none 2>/dev/null; then
+              echo "$database exists; left as it is"
+            else
+              az sql db create --resource-group "${{ vars.RESOURCE_GROUP }}" --server "$server" --name "$database" \
+                --edition GeneralPurpose --family Gen5 --compute-model Serverless \
+                --capacity 1 --min-capacity 0.5 --backup-storage-redundancy Local \
+                --use-free-limit true --free-limit-exhaustion-behavior AutoPause --output none
+              echo "$database created on the free offer"
+            fi
+          done
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22.12.0"
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+
+      # The website learns where the services are from config.js, written here
+      # from Terraform's outputs: configuration, not code.
+      - name: Build the website with the services' addresses
+        working-directory: ui
+        run: |
+          npm ci --no-audit --no-fund
+          npm run build
+          jq -r '.service_urls.value
+            | "window.ALRAHMEH_CONFIG = {\n  animalsUrl: \"\(.animals)\",\n  donationsUrl: \"\(.donations)\",\n  enquiriesUrl: \"\(.enquiries)\",\n};"' \
+            "$RUNNER_TEMP/outputs.json" > dist/config.js
+          cat dist/config.js
+
+      # Hashed assets (index-BjD3-Kgg.js) never change content, so browsers
+      # may keep them for a year. index.html and config.js must be checked
+      # again on every visit, so they go up a second time with no-cache.
+      # --auth-mode key: the identity reads the account key through Azure
+      # (Contributor allows that), so no extra data-access role is needed.
+      # "\$web" is the literal container name; the backslash stops the shell
+      # from reading $web as an (empty) variable.
+      - name: Upload the website to $web
+        run: |
+          az storage blob upload-batch --account-name "${{ vars.UI_STORAGE }}" --auth-mode key \
+            --destination "\$web" --source ui/dist --overwrite \
+            --content-cache-control "public, max-age=31536000, immutable" --output none
+          for file in index.html config.js; do
+            az storage blob upload --account-name "${{ vars.UI_STORAGE }}" --auth-mode key \
+              --container-name "\$web" --name "$file" --file "ui/dist/$file" --overwrite \
+              --content-cache-control "no-cache" --output none
+          done
+
+      # The first request after idle may wake a container and a paused
+      # database, which can take about a minute, so each service gets up to
+      # five minutes to answer 200 with "status": "ok".
+      - name: Wait for every service to be healthy
+        run: |
+          for service in animals donations enquiries; do
+            url=$(jq -r ".service_urls.value.$service" "$RUNNER_TEMP/outputs.json")/health
+            deadline=$(( $(date +%s) + 300 ))
+            until body=$(curl --silent --fail --max-time 30 "$url") && [ "$(echo "$body" | jq -r .status)" = "ok" ]; do
+              if [ "$(date +%s)" -ge "$deadline" ]; then
+                echo "::error::$service did not answer 200 with status ok on $url within 5 minutes"
+                exit 1
+              fi
+              echo "$service not healthy yet; trying again in 10 s"
+              sleep 10
+            done
+            echo "$service healthy: $body"
+          done
+          echo "Website: $(jq -r '.website_url.value' "$RUNNER_TEMP/outputs.json")"
