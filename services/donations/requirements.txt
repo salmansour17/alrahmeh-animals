@@ -5,7 +5,7 @@ pymssql==2.4.6
 # Production web server in the container; Flask's own server is for development
 gunicorn==27.0.1
 # Test-mode card donations; imported only by donations/payments.py
-stripe==15.6.1
+stripe==17.1.0
 
 # Test tooling
 pytest==8.3.4
