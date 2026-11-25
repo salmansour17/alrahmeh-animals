@@ -1,0 +1,13 @@
+# Lint settings for the hand-written scanners, the same as the services':
+# `ruff check .` and `ruff format --check .` from this folder.
+
+target-version = "py311"
+line-length = 120
+
+[lint]
+# E, W: pycodestyle errors and warnings. F: pyflakes. I: import order.
+# B: bugbear (likely bugs). UP: older syntax with a modern replacement.
+select = ["E", "F", "W", "I", "B", "UP"]
+
+[lint.isort]
+known-first-party = ["sast", "sca"]
