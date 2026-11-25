@@ -13,8 +13,9 @@ password; each `<...>` is filled in when the setup is done.
    `ghcr.io/<owner>/alrahmeh-<service>:<commit>`.
 3. `terraform apply` (in `infra/`) updates the Container Apps environment, the
    three Container Apps (with those image tags) and the SQL server.
-4. The three databases are created on Azure SQL's free offer if they do not
-   exist yet. Existing databases are left exactly as they are.
+4. The three databases are created if they do not exist yet: serverless,
+   paused after 15 idle minutes, at most 1 GB each. Existing databases are
+   left exactly as they are.
 5. The website is built with a `config.js` holding the three services'
    addresses from Terraform, and uploaded to the storage account's `$web`
    container: `index.html` and `config.js` with `no-cache`, the hashed assets
@@ -46,7 +47,7 @@ and digits only** (8 or more, upper and lower case and a digit).
 |---|---|
 | `PREFIX` | `<PREFIX>`: IE username with dots replaced by hyphens |
 | `LOCATION` | `<REGION>`: one of the subscription's allowed regions |
-| `SQL_LOCATION` | `<SQL_REGION>`: an allowed region where the free offer exists (not `spaincentral`) |
+| `SQL_LOCATION` | `<SQL_REGION>`: an allowed region where the subscription may create a SQL server (`spaincentral` for this one) |
 | `RESOURCE_GROUP` | `rg-<PREFIX>` |
 | `UI_STORAGE` | `<PREFIXNH>ui`: the prefix without hyphens, then `ui` |
 

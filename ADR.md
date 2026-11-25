@@ -434,3 +434,23 @@ service so the earmark check stops meeting cold starts; move the databases off
 the free offer to a larger serverless or provisioned size, and pool
 connections instead of opening one per request; and put a CDN in front of the
 static website.
+
+**Amended 2026-11-25, at the first deploy.** Two assumptions above did not
+hold. Azure would not create a SQL server in `germanywestcentral` for this
+subscription, so the server is in `spaincentral` (`SQL_LOCATION`), while the
+Container Apps stay in `germanywestcentral`; each database call therefore
+crosses two regions, which adds a few tens of milliseconds. And Azure refused
+the free offer in every region the subscription may use, so, with my
+professor's agreement, the databases are ordinary serverless ones: General
+Purpose Gen5, 0.5 to 1 vCore, paused after 15 idle minutes (the shortest
+allowed, down from the free offer's fixed 60), at most 1 GB each, locally
+redundant backups. Cost now follows use in the databases too: paused, the
+three cost about $0.41 a month in storage; awake, about $0.29 an hour each,
+and every wake bills at least the 15 minutes before it can pause again.
+Nothing may wake them on a timer: kept awake around the clock, the three would
+use the $100 student credit in about five days. The 1 GB ceiling holds the
+current data, photos included, many times over, and raising it is one
+in-place command. The reason for creating the databases with `az` instead of
+Terraform was the free offer, which no longer applies; they stay with `az`
+for now because they already exist, and moving them into Terraform would mean
+importing them.

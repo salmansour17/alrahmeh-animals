@@ -8,7 +8,7 @@
 # serves the website and holds this state file, and the pipeline's identity,
 # which the bootstrap creates because the pipeline's identity cannot create
 # them itself; and the three databases, which the pipeline creates with az
-# because this provider cannot set Azure SQL's free offer (ADR-8).
+# (ADR-8).
 
 terraform {
   required_version = ">= 1.13.0, < 2.0.0"

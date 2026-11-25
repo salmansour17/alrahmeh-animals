@@ -13,7 +13,7 @@ variable "location" {
 }
 
 variable "sql_location" {
-  description = "Azure region for the SQL server. Can differ from location, because the free offer is not available everywhere."
+  description = "Azure region for the SQL server. Can differ from location, because not every region lets this subscription create one."
   type        = string
 }
 
