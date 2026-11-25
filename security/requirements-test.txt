@@ -1,0 +1,6 @@
+# What scanners.yml installs to test and lint the hand-written scanners.
+# The scanners themselves use only the standard library and need nothing.
+# Same versions as the services' requirements.
+pytest==8.3.4
+pytest-cov==6.0.0
+ruff==0.14.5

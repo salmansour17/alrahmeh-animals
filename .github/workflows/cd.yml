@@ -1,10 +1,11 @@
 # Continuous deployment: every push to main is tested, then deployed to Azure.
 #
-# Order: the four check workflows (CI, Contracts, Terraform, Security) run
-# first, and nothing below runs unless all four pass on this same commit. Then the
-# images are pushed to GHCR tagged with the commit, Terraform updates Azure,
-# the databases are created if missing, the website is uploaded, and the run
-# fails unless every service answers /health with 200 within five minutes.
+# Order: the five check workflows (CI, Contracts, Terraform, Security,
+# Scanners) run first, and nothing below runs unless all five pass on this
+# same commit. Then the images are pushed to GHCR tagged with the commit,
+# Terraform updates Azure, the databases are created if missing, the website
+# is uploaded, and the run fails unless every service answers /health with 200
+# within five minutes.
 #
 # What it expects in the repository's settings (Settings > Secrets and
 # variables > Actions); docs/deployment.md says how each is created.
@@ -71,9 +72,15 @@ jobs:
       contents: read
       security-events: write # its reports go to the Security tab
 
+  # Our own SAST and SCA (security/).
+  scanners:
+    uses: ./.github/workflows/scanners.yml
+    permissions:
+      contents: read
+
   images:
     name: push image (${{ matrix.service }})
-    needs: [ci, contracts, terraform-check, security]
+    needs: [ci, contracts, terraform-check, security, scanners]
     runs-on: ubuntu-24.04
     permissions:
       contents: read
