@@ -5,7 +5,7 @@
 # tag cannot change what we build on. It is the digest of the multi-platform
 # index, so the same line builds on amd64 (Azure) and arm64 (some laptops).
 # "slim" leaves out compilers and docs. Dependabot proposes updates to both.
-FROM python:3.13.9-slim-bookworm@sha256:b685a4fa58bb19d1814d78a1ec0f0208f351452724f78b20212c984d6e124a34
+FROM python:3.13.18-slim-bookworm@sha256:f0fa218d5b06f9b9235024fa061cde2cb141f726de52134471053d2d9b5324a3
 
 # No .pyc files in the image, log lines reach `docker logs` straight away, and
 # pip keeps no download cache in the layer.
@@ -19,7 +19,12 @@ WORKDIR /app
 # Dependencies first, on their own: this layer is rebuilt only when
 # requirements.txt changes, not on every code change.
 COPY requirements.txt ./
-RUN pip install -r requirements.txt
+# Then pip itself is removed. The running service never installs packages,
+# and pip carries its own bundled copies of urllib3, msgpack and setuptools,
+# which image scans flag (security.yml); without pip, neither those copies nor
+# the means to install anything else is left in the image.
+RUN pip install -r requirements.txt \
+    && pip uninstall --yes pip
 
 # Then the code, file by file. No `COPY . .`: only what the service runs goes
 # in, so tests, caches and any stray .env on the build machine stay out.
