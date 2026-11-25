@@ -1,0 +1,15 @@
+# Findings gitleaks reports in Git history that are known not to be secrets.
+# History cannot be rewritten, so each is listed here by its exact fingerprint
+# (commit:file:rule:line). Anything else gitleaks finds still fails the build.
+# Each was checked by hand on 2026-11-25; the reason is given above it.
+
+# Made-up Stripe keys in Assignment 1 tests ("sk_test_dummy..." and
+# "sk_live_dummy..."), used to prove a key is never printed and that a live key
+# is refused. They match gitleaks' Stripe pattern but were never real keys.
+e28815259248a90f9e3fea4b863de8ade83d933b:tests/test_donations_routes.py:stripe-access-token:230
+8302e6c301b58e76a5c43a4cf2e32784c750f22f:tests/test_security.py:stripe-access-token:75
+8302e6c301b58e76a5c43a4cf2e32784c750f22f:tests/test_security.py:stripe-access-token:81
+
+# The Assignment 1 README's example `curl -u staff:$ADMIN_PASSWORD ...`, which
+# reads the password from an environment variable; no password is written in it.
+e49690514bf4853efcc3eef38e5bbcb217fd32ba:README.md:curl-auth-user:80

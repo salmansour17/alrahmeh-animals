@@ -71,13 +71,13 @@ def test_config_repr_never_shows_secrets(monkeypatch):
     """A Config printed in a log line or a failing test must not reveal any
     secret. The values here are dummies, recognisable if they ever leaked."""
     monkeypatch.setenv("ADMIN_PASSWORD", "dummy-admin-VALUE")
-    monkeypatch.setenv("STRIPE_SECRET_KEY", "sk_test_dummyVALUE")
+    monkeypatch.setenv("STRIPE_SECRET_KEY", "sk_test_dummyVALUE")  # gitleaks:allow (made-up test key)
     monkeypatch.setenv("STRIPE_WEBHOOK_SECRET", "whsec_dummyVALUE")
 
     config = load_config()
     shown = repr(config) + str(config)
 
-    assert config.stripe_secret_key == "sk_test_dummyVALUE"
+    assert config.stripe_secret_key == "sk_test_dummyVALUE"  # gitleaks:allow (made-up test key)
     assert "VALUE" not in shown
     assert "sk_test_" not in shown and "whsec_" not in shown
 

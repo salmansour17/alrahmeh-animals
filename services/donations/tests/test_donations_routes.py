@@ -236,7 +236,7 @@ def test_without_keys_both_payment_endpoints_are_503_and_the_rest_works(client):
 def test_a_live_key_is_refused_by_name_and_never_logged(config, caplog):
     live = replace(
         config,
-        stripe_secret_key="sk_live_dummyLIVEVALUE",
+        stripe_secret_key="sk_live_dummyLIVEVALUE",  # gitleaks:allow (made-up test key)
         stripe_webhook_secret="whsec_dummyWEBHOOKVALUE",
     )
     client = create_app(live).test_client()

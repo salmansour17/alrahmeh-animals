@@ -1,7 +1,7 @@
 # Continuous deployment: every push to main is tested, then deployed to Azure.
 #
-# Order: the three check workflows (CI, Contracts, Terraform) run first, and
-# nothing below runs unless all three pass on this same commit. Then the
+# Order: the four check workflows (CI, Contracts, Terraform, Security) run
+# first, and nothing below runs unless all four pass on this same commit. Then the
 # images are pushed to GHCR tagged with the commit, Terraform updates Azure,
 # the databases are created if missing, the website is uploaded, and the run
 # fails unless every service answers /health with 200 within five minutes.
@@ -62,9 +62,18 @@ jobs:
     permissions:
       contents: read
 
+  # Image vulnerabilities, misconfigurations, secrets in history, and our own
+  # policies. An image with a fixable HIGH or CRITICAL vulnerability is never
+  # pushed, let alone deployed.
+  security:
+    uses: ./.github/workflows/security.yml
+    permissions:
+      contents: read
+      security-events: write # its reports go to the Security tab
+
   images:
     name: push image (${{ matrix.service }})
-    needs: [ci, contracts, terraform-check]
+    needs: [ci, contracts, terraform-check, security]
     runs-on: ubuntu-24.04
     permissions:
       contents: read
