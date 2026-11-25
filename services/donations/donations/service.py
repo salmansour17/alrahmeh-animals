@@ -164,9 +164,7 @@ class DonationService:
         200, because a provider retry could not fix it.
         """
         session_id = payment.charge.session_id
-        if payment.amount_fils is None or not (
-            MIN_CHECKOUT_FILS <= payment.amount_fils <= MAX_DONATION_FILS
-        ):
+        if payment.amount_fils is None or not (MIN_CHECKOUT_FILS <= payment.amount_fils <= MAX_DONATION_FILS):
             logger.error("Payment %s not recorded: unexpected currency or amount; reconcile by hand", session_id)
             return WebhookOutcome.NEEDS_RECONCILIATION
         try:

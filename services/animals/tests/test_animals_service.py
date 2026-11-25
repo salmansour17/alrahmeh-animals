@@ -276,9 +276,7 @@ def test_list_rejects_unknown_status_filter(service):
         lambda s: s.status_history(999),
         lambda s: s.medical_history(999),
         lambda s: s.vaccinations(999),
-        lambda s: s.record_medical(
-            999, {"record_type": "checkup", "description": "x", "occurred_on": "2026-09-01"}
-        ),
+        lambda s: s.record_medical(999, {"record_type": "checkup", "description": "x", "occurred_on": "2026-09-01"}),
     ],
     ids=["get", "transition", "history", "medical", "vaccinations", "record_medical"],
 )
@@ -462,9 +460,7 @@ def test_declining_an_open_request_changes_only_the_request(service, placements)
     assert service.get(animal_id).status is S.PENDING
 
 
-def test_when_the_approved_adoption_falls_through_the_next_can_be_approved(
-    service, placements, placement_repository
-):
+def test_when_the_approved_adoption_falls_through_the_next_can_be_approved(service, placements, placement_repository):
     animal_id = _animal_in(service, S.AVAILABLE)
     first, backup = _ask(placements, animal_id), _ask(placements, animal_id)
     placements.decide(first.id, {"outcome": "approved"})
@@ -478,9 +474,7 @@ def test_when_the_approved_adoption_falls_through_the_next_can_be_approved(
     assert service.get(animal_id).status is S.PENDING
 
 
-def test_moving_a_pending_animal_back_by_hand_declines_its_approved_adoption(
-    service, placements, placement_repository
-):
+def test_moving_a_pending_animal_back_by_hand_declines_its_approved_adoption(service, placements, placement_repository):
     animal_id = _animal_in(service, S.AVAILABLE)
     first, backup = _ask(placements, animal_id), _ask(placements, animal_id)
     placements.decide(first.id, {"outcome": "approved"})
@@ -511,9 +505,7 @@ def test_a_declined_request_cannot_be_declined_again(service, placements):
         placements.decide(request.id, {"outcome": "declined"})
 
 
-def test_approving_a_foster_declines_other_foster_requests_but_not_adoptions(
-    service, placements, placement_repository
-):
+def test_approving_a_foster_declines_other_foster_requests_but_not_adoptions(service, placements, placement_repository):
     animal_id = _animal_in(service, S.AVAILABLE)
     chosen = _ask(placements, animal_id, K.FOSTER)
     other_foster = _ask(placements, animal_id, K.FOSTER)
@@ -605,9 +597,7 @@ def test_a_filled_honeypot_is_accepted_silently_and_stores_nothing(service, plac
         ({**APPLICANT, "kind": "adoption", "email": "x" * 250 + "@a.io"}, "at most 254"),
     ],
 )
-def test_invalid_requests_are_rejected_without_echoing_personal_data(
-    service, placements, payload, complaint
-):
+def test_invalid_requests_are_rejected_without_echoing_personal_data(service, placements, payload, complaint):
     animal_id = _animal_in(service, S.AVAILABLE)
     with pytest.raises(ValidationError, match=re.escape(complaint)) as raised:
         placements.submit(animal_id, payload)
@@ -934,7 +924,6 @@ def test_profile_needs_an_existing_animal(service):
         service.update_profile(999, PROFILE)
     with pytest.raises(AnimalNotFound):
         service.profile(999)
-
 
 
 def test_a_date_column_that_is_not_a_date_fails_loudly():

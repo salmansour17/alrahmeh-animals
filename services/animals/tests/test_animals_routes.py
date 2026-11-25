@@ -20,10 +20,7 @@ from sample_animals import add_sample_animals
 from tests.conftest import ADMIN_PASSWORD
 from tests.test_animals_service import image_bytes, opened
 
-STAFF = {
-    "Authorization": "Basic "
-    + base64.b64encode(f"staff:{ADMIN_PASSWORD}".encode()).decode("ascii")
-}
+STAFF = {"Authorization": "Basic " + base64.b64encode(f"staff:{ADMIN_PASSWORD}".encode()).decode("ascii")}
 ANIMAL = {"name": "Zaytoon", "species": "Dog", "intake_date": "2026-09-01", "notes": "Bites vets."}
 
 
@@ -108,17 +105,13 @@ def test_sample_animals_are_added_once_to_an_empty_database(client, database):
 
 def test_legal_transition_returns_the_updated_animal(client):
     animal_id = _admit(client)
-    response = client.post(
-        f"/api/animals/{animal_id}/transitions", json={"to": "fostering"}, headers=STAFF
-    )
+    response = client.post(f"/api/animals/{animal_id}/transitions", json={"to": "fostering"}, headers=STAFF)
     assert response.status_code == 200
     assert response.get_json()["status"] == "fostering"
 
 
 def test_non_json_body_is_a_validation_error_not_a_crash(client):
-    response = client.post(
-        "/api/animals", data="name=Zaytoon", content_type="text/plain", headers=STAFF
-    )
+    response = client.post("/api/animals", data="name=Zaytoon", content_type="text/plain", headers=STAFF)
     assert response.status_code == 400
 
 
@@ -126,7 +119,11 @@ def test_placement_stats_are_public(client):
     response = client.get("/api/animals/stats")
     assert response.status_code == 200
     assert response.get_json() == {
-        "available": 0, "fostering": 0, "pending": 0, "adopted": 0, "homes_found": 0,
+        "available": 0,
+        "fostering": 0,
+        "pending": 0,
+        "adopted": 0,
+        "homes_found": 0,
     }
 
 
@@ -257,9 +254,7 @@ def test_unknown_request_is_404(client):
 
 
 def _upload(client, animal_id, data, content_type="image/jpeg", headers=STAFF):
-    return client.put(
-        f"/api/animals/{animal_id}/photo", data=data, headers={**headers, "Content-Type": content_type}
-    )
+    return client.put(f"/api/animals/{animal_id}/photo", data=data, headers={**headers, "Content-Type": content_type})
 
 
 def test_staff_upload_and_the_public_sees_the_photo(client):
@@ -330,8 +325,13 @@ def test_missing_animal_or_photo_is_404(client):
 
 def test_staff_write_the_profile_and_the_public_read_it_formatted(client):
     animal_id = _admit(client)
-    details = {"born_on": "2026-01-15", "colour": "Rich golden", "personality": "Friendly",
-               "weight_kg": "12.5", "about": "Loves everyone he meets."}
+    details = {
+        "born_on": "2026-01-15",
+        "colour": "Rich golden",
+        "personality": "Friendly",
+        "weight_kg": "12.5",
+        "about": "Loves everyone he meets.",
+    }
 
     assert client.put(f"/api/animals/{animal_id}/profile", json=details).status_code == 401
     saved = client.put(f"/api/animals/{animal_id}/profile", json=details, headers=STAFF)
@@ -352,4 +352,3 @@ def test_an_animal_without_a_profile_has_empty_details(client):
 def test_a_bad_profile_is_400(client):
     response = client.put(f"/api/animals/{_admit(client)}/profile", json={"weight_kg": 12}, headers=STAFF)
     assert (response.status_code, response.get_json()["error"]) == (400, "validation_failed")
-

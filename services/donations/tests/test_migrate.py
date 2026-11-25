@@ -152,7 +152,9 @@ def test_the_service_migrations_are_numbered_from_001():
 
 
 def test_a_database_url_is_parsed_into_its_parts():
-    settings = ConnectionSettings.from_url("mssql://svc_user:p%40ss%3Aword@db.example.org:14330/animals_db?encrypt=true")
+    settings = ConnectionSettings.from_url(
+        "mssql://svc_user:p%40ss%3Aword@db.example.org:14330/animals_db?encrypt=true"
+    )
     assert (settings.host, settings.port, settings.user, settings.database, settings.encrypt) == (
         "db.example.org",
         14330,

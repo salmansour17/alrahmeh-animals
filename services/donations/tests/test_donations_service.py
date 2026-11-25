@@ -102,8 +102,20 @@ def test_amounts_convert_to_exact_fils(text, fils):
 @pytest.mark.parametrize(
     "bad",
     [
-        "1e3", "NaN", "Infinity", "-5", " 5", "5 ", "5.1234", "25.5555", "", ".5", "5.",
-        "1,000", "25\n", "٢٥",  # Arabic-Indic "25": \d would have let it through
+        "1e3",
+        "NaN",
+        "Infinity",
+        "-5",
+        " 5",
+        "5 ",
+        "5.1234",
+        "25.5555",
+        "",
+        ".5",
+        "5.",
+        "1,000",
+        "25\n",
+        "٢٥",  # Arabic-Indic "25": \d would have let it through
         "123456",
     ],
 )
@@ -332,9 +344,7 @@ def gateway() -> FakeGateway:
 
 @pytest.fixture
 def paying_service(repository, gateway) -> DonationService:
-    return DonationService(
-        repository, FakeAnimalDirectory({KNOWN_ANIMAL}), today=lambda: TODAY, gateway=gateway
-    )
+    return DonationService(repository, FakeAnimalDirectory({KNOWN_ANIMAL}), today=lambda: TODAY, gateway=gateway)
 
 
 def test_checkout_asks_the_gateway_and_writes_nothing(paying_service, gateway):

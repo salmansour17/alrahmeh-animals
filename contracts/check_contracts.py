@@ -53,7 +53,9 @@ def load_yaml(path: Path) -> dict:
 def check_schema(system: dict) -> None:
     schema = json.loads((ROOT / "system.schema.json").read_text(encoding="utf-8"))
     Draft202012Validator.check_schema(schema)
-    errors = sorted(Draft202012Validator(schema).iter_errors(system), key=lambda e: list(e.path))
+    errors = sorted(
+        Draft202012Validator(schema).iter_errors(system), key=lambda e: list(e.path)
+    )
     for error in errors:
         where = "/".join(str(p) for p in error.path) or "(top level)"
         problem(f"system.yaml {where}: {error.message}")
@@ -90,7 +92,11 @@ def client_constants(path: Path) -> dict:
     it, so this check needs none of the service's dependencies."""
     values = {}
     for node in ast.parse(path.read_text(encoding="utf-8")).body:
-        if isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
+        if (
+            isinstance(node, ast.Assign)
+            and len(node.targets) == 1
+            and isinstance(node.targets[0], ast.Name)
+        ):
             try:
                 values[node.targets[0].id] = ast.literal_eval(node.value)
             except ValueError:
@@ -107,40 +113,60 @@ def check_calls(system: dict, documents: dict[str, dict]) -> None:
                 problem(f"{caller} calls unknown service {target}")
                 continue
             if call["url_env"] not in service["env"]:
-                problem(f"{caller}: url_env {call['url_env']} is not among its env variables")
+                problem(
+                    f"{caller}: url_env {call['url_env']} is not among its env variables"
+                )
             for endpoint in call["endpoints"]:
                 method, path = endpoint.split(" ", 1)
                 if operation(documents[target], method, path) is None:
-                    problem(f"{caller} calls {endpoint}, which is not in {target}'s openapi.yaml")
+                    problem(
+                        f"{caller} calls {endpoint}, which is not in {target}'s openapi.yaml"
+                    )
                 else:
                     ok(f"{caller} -> {target}: {endpoint} is documented by {target}")
 
     # The one call in this system, checked against the code that makes it.
     client = client_constants(ROOT / "services/donations/donations/animals_client.py")
     endpoint = f"{client['ANIMAL_METHOD']} {client['ANIMAL_PATH']}"
-    calls = [c for c in services["donations"].get("calls", []) if c["service"] == "animals"]
+    calls = [
+        c for c in services["donations"].get("calls", []) if c["service"] == "animals"
+    ]
     if not calls or endpoint not in calls[0]["endpoints"]:
         problem(f"donations' client calls {endpoint}, which system.yaml does not list")
         return
     answers = set(client["ANSWERS"])
-    documented = operation(documents["animals"], client["ANIMAL_METHOD"], client["ANIMAL_PATH"])
+    documented = operation(
+        documents["animals"], client["ANIMAL_METHOD"], client["ANIMAL_PATH"]
+    )
     codes = {int(code) for code in documented["responses"]}
     if codes != answers:
-        problem(f"animals documents {endpoint} answering {sorted(codes)}, but donations handles {sorted(answers)}")
+        problem(
+            f"animals documents {endpoint} answering {sorted(codes)}, but donations handles {sorted(answers)}"
+        )
     else:
-        ok(f"{endpoint}: animals answers {sorted(codes)}, exactly what donations' client handles")
-    parameters = {p["name"] for p in documented.get("parameters", []) if "$ref" not in p}
+        ok(
+            f"{endpoint}: animals answers {sorted(codes)}, exactly what donations' client handles"
+        )
+    parameters = {
+        p["name"] for p in documented.get("parameters", []) if "$ref" not in p
+    }
     parameters |= {
-        documents["animals"]["components"]["parameters"][p["$ref"].rsplit("/", 1)[-1]]["name"]
+        documents["animals"]["components"]["parameters"][p["$ref"].rsplit("/", 1)[-1]][
+            "name"
+        ]
         for p in documented.get("parameters", [])
         if "$ref" in p
     }
     placeholders = set(re.findall(r"{([a-z_]+)}", client["ANIMAL_PATH"]))
     if parameters != placeholders:
-        problem(f"{endpoint}: animals documents parameters {parameters}, the client fills {placeholders}")
+        problem(
+            f"{endpoint}: animals documents parameters {parameters}, the client fills {placeholders}"
+        )
     timeout = services["donations"]["env"]["ANIMALS_TIMEOUT_S"]["default"]
     if calls[0]["timeout_s"] != timeout:
-        problem(f"donations: calls timeout_s {calls[0]['timeout_s']} differs from ANIMALS_TIMEOUT_S default {timeout}")
+        problem(
+            f"donations: calls timeout_s {calls[0]['timeout_s']} differs from ANIMALS_TIMEOUT_S default {timeout}"
+        )
 
 
 ENV_READS = [
@@ -171,9 +197,13 @@ def check_env(system: dict) -> None:
         if read - listed:
             problem(f"{name} reads {sorted(read - listed)}, missing from system.yaml")
         if listed - read:
-            problem(f"{name}: system.yaml lists {sorted(listed - read)}, which the code never reads")
+            problem(
+                f"{name}: system.yaml lists {sorted(listed - read)}, which the code never reads"
+            )
         if read == listed:
-            ok(f"{name}: system.yaml lists exactly the {len(read)} environment variables the code reads")
+            ok(
+                f"{name}: system.yaml lists exactly the {len(read)} environment variables the code reads"
+            )
 
 
 def main() -> int:
