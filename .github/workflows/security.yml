@@ -97,7 +97,7 @@ jobs:
           format: sarif
           output: trivy-image.sarif
           skip-setup-trivy: true # installed by the step above
-      - uses: github/codeql-action/upload-sarif@74c1aea9df7c0f02e9b7bfe4a8935abf2e5e3aa6 # v3.39.5
+      - uses: github/codeql-action/upload-sarif@1bd86f2fdb4b86187fa4059f16f31a3202acc9ea # v4.39.4
         if: ${{ !cancelled() }}
         with:
           sarif_file: trivy-image.sarif
@@ -140,7 +140,7 @@ jobs:
           format: sarif
           output: trivy-config.sarif
           skip-setup-trivy: true
-      - uses: github/codeql-action/upload-sarif@74c1aea9df7c0f02e9b7bfe4a8935abf2e5e3aa6 # v3.39.5
+      - uses: github/codeql-action/upload-sarif@1bd86f2fdb4b86187fa4059f16f31a3202acc9ea # v4.39.4
         if: ${{ !cancelled() }}
         with:
           sarif_file: trivy-config.sarif
