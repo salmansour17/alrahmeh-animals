@@ -34,9 +34,7 @@ _MAX_JOD_DIGITS = 5
 # [0-9] rather than \d: \d also matches Arabic-Indic digits, which Decimal
 # would happily convert. fullmatch rather than match + $: $ allows a trailing
 # newline.
-_AMOUNT_JOD = re.compile(
-    rf"[0-9]{{1,{_MAX_JOD_DIGITS}}}(\.[0-9]{{1,{JOD_DECIMAL_PLACES}}})?"
-)
+_AMOUNT_JOD = re.compile(rf"[0-9]{{1,{_MAX_JOD_DIGITS}}}(\.[0-9]{{1,{JOD_DECIMAL_PLACES}}})?")
 
 DONOR_NAME_MAX = 120
 
@@ -214,8 +212,7 @@ def parse_amount_jod(value: Any) -> int:
         raise ValidationError('amount_jod must be a string, e.g. "25.500"')
     if not _AMOUNT_JOD.fullmatch(value):
         raise ValidationError(
-            f"amount_jod must be digits with at most {JOD_DECIMAL_PLACES} decimal places, "
-            'e.g. "25.500"'
+            f'amount_jod must be digits with at most {JOD_DECIMAL_PLACES} decimal places, e.g. "25.500"'
         )
     amount_fils = int(Decimal(value) * FILS_PER_JOD)
     if amount_fils <= 0:

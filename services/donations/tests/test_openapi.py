@@ -35,12 +35,7 @@ def _flask_operations(config, database) -> set[tuple[str, str]]:
 
 
 def _documented_operations() -> set[tuple[str, str]]:
-    return {
-        (method, path)
-        for path, item in _document()["paths"].items()
-        for method in item
-        if method in HTTP_METHODS
-    }
+    return {(method, path) for path, item in _document()["paths"].items() for method in item if method in HTTP_METHODS}
 
 
 def test_every_flask_route_is_documented(config, database):

@@ -1,0 +1,82 @@
+# Dependabot keeps the third-party code we depend on up to date by opening
+# pull requests, which then go through CI like any other change.
+#
+# Every ecosystem is checked weekly. Minor and patch bumps of the same kind are
+# grouped into one pull request to keep the noise down; major bumps come one
+# by one, because they can break things and deserve their own review.
+# Security updates are never grouped: each groups block below applies to
+# version updates only, so a fix for a known vulnerability always arrives as
+# its own pull request, as soon as GitHub knows about it.
+#
+# Labels are left to Dependabot's defaults: "dependencies" plus the
+# ecosystem (python, javascript, docker, github_actions), which it creates in
+# the repository itself. Custom labels would be skipped unless created first.
+
+version: 2
+
+updates:
+  # Python: one entry per service, each with its own requirements.txt.
+  - package-ecosystem: pip
+    directory: /services/animals
+    schedule: { interval: weekly, day: monday }
+    open-pull-requests-limit: 5
+    groups:
+      animals-minor-and-patch:
+        applies-to: version-updates
+        update-types: [minor, patch]
+
+  - package-ecosystem: pip
+    directory: /services/donations
+    schedule: { interval: weekly, day: monday }
+    open-pull-requests-limit: 5
+    groups:
+      donations-minor-and-patch:
+        applies-to: version-updates
+        update-types: [minor, patch]
+
+  - package-ecosystem: pip
+    directory: /services/enquiries
+    schedule: { interval: weekly, day: monday }
+    open-pull-requests-limit: 5
+    groups:
+      enquiries-minor-and-patch:
+        applies-to: version-updates
+        update-types: [minor, patch]
+
+  # The website's npm packages (ui/package.json and its lock file).
+  - package-ecosystem: npm
+    directory: /ui
+    schedule: { interval: weekly, day: monday }
+    open-pull-requests-limit: 5
+    groups:
+      ui-minor-and-patch:
+        applies-to: version-updates
+        update-types: [minor, patch]
+
+  # The actions our workflows use. They are pinned to commit SHAs; Dependabot
+  # moves the SHA and the version comment together.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule: { interval: weekly, day: monday }
+    open-pull-requests-limit: 5
+    groups:
+      actions-minor-and-patch:
+        applies-to: version-updates
+        update-types: [minor, patch]
+
+  # Base images, one entry per folder with a Dockerfile. They are pinned by
+  # tag and digest; Dependabot updates both.
+  - package-ecosystem: docker
+    directory: /services/animals
+    schedule: { interval: weekly, day: monday }
+    open-pull-requests-limit: 2
+
+  - package-ecosystem: docker
+    directory: /services/donations
+    schedule: { interval: weekly, day: monday }
+    open-pull-requests-limit: 2
+
+  - package-ecosystem: docker
+    directory: /services/enquiries
+    schedule: { interval: weekly, day: monday }
+    open-pull-requests-limit: 2

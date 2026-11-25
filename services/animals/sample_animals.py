@@ -25,49 +25,78 @@ logger = logging.getLogger(__name__)
 SAMPLES = [
     {
         "animal": ("Luna", "Cat", "Domestic shorthair", 40),
-        "profile": ("Grey tabby", "Calm and affectionate", "3.8", 700,
-                    "Luna was found under a car in Madaba. She loves a sunny windowsill "
-                    "and will purr the moment you sit down next to her."),
+        "profile": (
+            "Grey tabby",
+            "Calm and affectionate",
+            "3.8",
+            700,
+            "Luna was found under a car in Madaba. She loves a sunny windowsill "
+            "and will purr the moment you sit down next to her.",
+        ),
         "medical": [("vaccination", "Rabies", 35), ("vaccination", "FVRCP", 35), ("checkup", "Spayed", 30)],
         "moves": [],
     },
     {
         "animal": ("Simba", "Kitten", "Mixed", 12),
-        "profile": ("Ginger", "Playful and curious", "1.2", 100,
-                    "Simba arrived with his two sisters, who have already found homes. "
-                    "He chases anything that moves and naps just as hard."),
+        "profile": (
+            "Ginger",
+            "Playful and curious",
+            "1.2",
+            100,
+            "Simba arrived with his two sisters, who have already found homes. "
+            "He chases anything that moves and naps just as hard.",
+        ),
         "medical": [("vaccination", "FVRCP (first dose)", 10)],
         "moves": [],
     },
     {
         "animal": ("Rocky", "Dog", "Canaan dog mix", 90),
-        "profile": ("Sandy", "Loyal and gentle", "18.5", 1100,
-                    "Rocky is a quiet giant who walks well on a lead and gets on with other "
-                    "dogs. He would love a home with a garden."),
+        "profile": (
+            "Sandy",
+            "Loyal and gentle",
+            "18.5",
+            1100,
+            "Rocky is a quiet giant who walks well on a lead and gets on with other "
+            "dogs. He would love a home with a garden.",
+        ),
         "medical": [("vaccination", "Rabies", 85), ("vaccination", "DHPP", 85), ("treatment", "Tick treatment", 60)],
         "moves": [],
     },
     {
         "animal": ("Bella", "Dog", "Saluki mix", 25),
-        "profile": ("Cream", "Shy at first, then devoted", "14", 550,
-                    "Bella was rescued from the roadside near Amman. She takes a day to trust "
-                    "new people and then follows them everywhere."),
+        "profile": (
+            "Cream",
+            "Shy at first, then devoted",
+            "14",
+            550,
+            "Bella was rescued from the roadside near Amman. She takes a day to trust "
+            "new people and then follows them everywhere.",
+        ),
         "medical": [("vaccination", "Rabies", 20), ("checkup", "Healthy weight gain", 5)],
         "moves": [],
     },
     {
         "animal": ("Zaytoon", "Dog", "Mixed", 120),
-        "profile": ("Black and white", "Energetic and friendly", "11", 800,
-                    "Zaytoon is living with a foster family while she learns house manners. "
-                    "She already knows sit, stay and paw."),
+        "profile": (
+            "Black and white",
+            "Energetic and friendly",
+            "11",
+            800,
+            "Zaytoon is living with a foster family while she learns house manners. "
+            "She already knows sit, stay and paw.",
+        ),
         "medical": [("vaccination", "Rabies", 115), ("vaccination", "DHPP", 115)],
         "moves": ["fostering"],
     },
     {
         "animal": ("Max", "Dog", "Labrador mix", 200),
-        "profile": ("Golden", "Easy-going", "27", 1500,
-                    "Max found his family after three months with us and now sends photos "
-                    "from his new sofa."),
+        "profile": (
+            "Golden",
+            "Easy-going",
+            "27",
+            1500,
+            "Max found his family after three months with us and now sends photos from his new sofa.",
+        ),
         "medical": [("vaccination", "Rabies", 190), ("vaccination", "DHPP", 190)],
         "moves": ["pending", "adopted"],
     },

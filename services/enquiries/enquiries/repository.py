@@ -25,8 +25,7 @@ class SqlEnquiryRepository:
     def get(self, enquiry_id: int) -> Enquiry | None:
         with self._database.unit_of_work() as connection:
             row = connection.execute(
-                "SELECT id, topic, name, email, subject, message, handled, received_at "
-                "FROM enquiries WHERE id = %s",
+                "SELECT id, topic, name, email, subject, message, handled, received_at FROM enquiries WHERE id = %s",
                 (enquiry_id,),
             ).fetchone()
         return _to_enquiry(row) if row else None

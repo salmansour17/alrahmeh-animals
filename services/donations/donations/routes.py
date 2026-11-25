@@ -155,7 +155,5 @@ def _impact(summary: ImpactSummary) -> dict:
         "total_raised": _money(summary.total_raised_fils),
         "donation_count": summary.donation_count,
         "animals_helped": summary.animals_helped,
-        "by_purpose": {
-            purpose.value: _money(total) for purpose, total in summary.totals_by_purpose_fils.items()
-        },
+        "by_purpose": {purpose.value: _money(total) for purpose, total in summary.totals_by_purpose_fils.items()},
     }

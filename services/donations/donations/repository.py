@@ -109,8 +109,7 @@ class SqlDonationRepository:
                 "FROM donations"
             ).fetchone()
             by_purpose = connection.execute(
-                "SELECT purpose, COALESCE(SUM(amount_fils), 0) AS total_fils "
-                "FROM donations GROUP BY purpose"
+                "SELECT purpose, COALESCE(SUM(amount_fils), 0) AS total_fils FROM donations GROUP BY purpose"
             ).fetchall()
         found = {DonationPurpose(row["purpose"]): row["total_fils"] for row in by_purpose}
         return ImpactSummary(

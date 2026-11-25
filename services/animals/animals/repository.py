@@ -37,6 +37,7 @@ from db import Database
 class _Conflict(Exception):
     """Raised inside a transaction to roll it back; never leaves this module."""
 
+
 class SqlAnimalRepository:
     """Implements service.AnimalRepository against this service's database."""
 
@@ -94,16 +95,13 @@ class SqlAnimalRepository:
         """How many animals are in each status. Statuses with no animals are
         simply absent here; the service fills them in."""
         with self._database.unit_of_work() as connection:
-            rows = connection.execute(
-                "SELECT status, COUNT(*) AS animals FROM animals GROUP BY status"
-            ).fetchall()
+            rows = connection.execute("SELECT status, COUNT(*) AS animals FROM animals GROUP BY status").fetchall()
         return {PlacementStatus(row["status"]): row["animals"] for row in rows}
 
     def profile(self, animal_id: int) -> AnimalProfile | None:
         with self._database.unit_of_work() as connection:
             row = connection.execute(
-                "SELECT born_on, colour, personality, weight_grams, about "
-                "FROM animal_profiles WHERE animal_id = %s",
+                "SELECT born_on, colour, personality, weight_grams, about FROM animal_profiles WHERE animal_id = %s",
                 (animal_id,),
             ).fetchone()
         if row is None:
@@ -154,19 +152,15 @@ class SqlAnimalRepository:
     def offline_adoptions(self) -> list[OfflineAdoption]:
         with self._database.unit_of_work() as connection:
             rows = connection.execute(
-                "SELECT id, animal_count, adopted_on, note FROM offline_adoptions "
-                "ORDER BY adopted_on DESC, id DESC"
+                "SELECT id, animal_count, adopted_on, note FROM offline_adoptions ORDER BY adopted_on DESC, id DESC"
             ).fetchall()
         return [
-            OfflineAdoption(row["id"], row["animal_count"], _as_date(row["adopted_on"]), row["note"])
-            for row in rows
+            OfflineAdoption(row["id"], row["animal_count"], _as_date(row["adopted_on"]), row["note"]) for row in rows
         ]
 
     def offline_adoption_total(self) -> int:
         with self._database.unit_of_work() as connection:
-            row = connection.execute(
-                "SELECT COALESCE(SUM(animal_count), 0) AS total FROM offline_adoptions"
-            ).fetchone()
+            row = connection.execute("SELECT COALESCE(SUM(animal_count), 0) AS total FROM offline_adoptions").fetchone()
         return row["total"]
 
     def change_status(
@@ -198,8 +192,7 @@ class SqlAnimalRepository:
                 )
             if adoption_fell_through:
                 connection.execute(
-                    "UPDATE placement_requests SET outcome = %s "
-                    "WHERE animal_id = %s AND kind = %s AND outcome = %s",
+                    "UPDATE placement_requests SET outcome = %s WHERE animal_id = %s AND kind = %s AND outcome = %s",
                     (
                         RequestOutcome.DECLINED.value,
                         animal_id,
@@ -247,9 +240,7 @@ class SqlAnimalRepository:
             occurred_on=record.occurred_on,
         )
 
-    def medical_records(
-        self, animal_id: int, record_type: MedicalRecordType | None
-    ) -> list[MedicalRecord]:
+    def medical_records(self, animal_id: int, record_type: MedicalRecordType | None) -> list[MedicalRecord]:
         with self._database.unit_of_work() as connection:
             if record_type is None:
                 rows = connection.execute(
@@ -393,16 +384,12 @@ class SqlPhotoStore:
 
     def load(self, animal_id: int) -> bytes | None:
         with self._database.unit_of_work() as connection:
-            row = connection.execute(
-                "SELECT photo FROM animal_photos WHERE animal_id = %s", (animal_id,)
-            ).fetchone()
+            row = connection.execute("SELECT photo FROM animal_photos WHERE animal_id = %s", (animal_id,)).fetchone()
         return bytes(row["photo"]) if row else None
 
     def version(self, animal_id: int) -> int | None:
         with self._database.unit_of_work() as connection:
-            row = connection.execute(
-                "SELECT version FROM animal_photos WHERE animal_id = %s", (animal_id,)
-            ).fetchone()
+            row = connection.execute("SELECT version FROM animal_photos WHERE animal_id = %s", (animal_id,)).fetchone()
         return row["version"] if row else None
 
     def versions(self, animal_ids: list[int]) -> dict[int, int]:

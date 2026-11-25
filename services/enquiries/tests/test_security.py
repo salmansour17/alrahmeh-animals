@@ -46,9 +46,7 @@ def test_wrong_password_is_rejected(client):
 def test_username_is_ignored(client, username):
     """There is one shared secret, not a set of accounts, so only the password
     half of the credential is checked."""
-    response = client.get(
-        "/api/meta/schema", headers=_basic_auth(ADMIN_PASSWORD, username=username)
-    )
+    response = client.get("/api/meta/schema", headers=_basic_auth(ADMIN_PASSWORD, username=username))
     assert response.status_code == 200
 
 

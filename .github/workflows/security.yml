@@ -1,0 +1,207 @@
+# Security checks with established tools, on every push and pull request,
+# weekly, and before every deploy (cd.yml calls this file and deploys only if
+# every job here passes). The hand-written scanners are in scanners.yml.
+#
+#   images     Trivy scans each built service image for known vulnerabilities
+#   config     Trivy scans the Dockerfiles, compose file and Terraform for
+#              misconfigurations
+#   secrets    gitleaks scans the whole Git history for committed secrets
+#   policy     Conftest checks our own rules (policy/) on the Dockerfiles and
+#              Terraform, after testing the rules themselves
+#
+# Each job fails the run on a finding; nothing here is allowed to fail quietly
+# (no continue-on-error, no `|| true`). Every tool is pinned to one version,
+# and the binaries downloaded directly are checked against their published
+# SHA-256 before they run.
+
+name: Security
+
+on:
+  push:
+    branches-ignore: [main] # main is checked through cd.yml, before deploying
+  pull_request:
+  workflow_call:
+  # Weekly, Monday 03:23 UTC: a quiet hour, and not on the hour, when
+  # scheduled runs queue up. New vulnerabilities are published every day, so
+  # an image that passed last week can fail today with no change of ours.
+  schedule:
+    - cron: "23 3 * * 1"
+
+permissions:
+  contents: read
+
+# One run per event and branch; a new push to a pull request cancels the
+# obsolete run. The event is part of the name so the weekly run never queues
+# behind, or cancels, the one cd.yml started on main.
+concurrency:
+  group: security-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  TRIVY_VERSION: v0.76.2
+
+jobs:
+  images:
+    name: trivy image (${{ matrix.service }})
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      security-events: write # upload the findings to the Security tab
+    strategy:
+      # Report all three images even when one fails.
+      fail-fast: false
+      matrix:
+        service: [animals, donations, enquiries]
+    env:
+      SERVICE: ${{ matrix.service }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      # The same Dockerfile CD pushes, built locally and never pushed.
+      - name: Build the image
+        run: docker build --tag "scan/$SERVICE:${GITHUB_SHA}" "services/$SERVICE"
+
+      # The gate: HIGH and CRITICAL vulnerabilities that have a fix.
+      #
+      # ignore-unfixed is a deliberate decision. Each image carries dozens of
+      # HIGH/CRITICAL findings (46 on 2026-11-25) in Debian packages for
+      # which Debian has not released a fix yet. Failing on them would block every deploy with
+      # nothing we could do about it, and the team would learn to ignore a red
+      # pipeline. A finding with a fix, on the other hand, is always something
+      # we can act on (bump the base image or the package), so that fails.
+      # The unfixed ones are not hidden: the report below lists them.
+      - name: Fail on fixable HIGH or CRITICAL vulnerabilities
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          version: ${{ env.TRIVY_VERSION }}
+          scan-type: image
+          image-ref: scan/${{ matrix.service }}:${{ github.sha }}
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+          format: table
+
+      # The full report, fixable or not, for the Security tab. Runs even when
+      # the gate failed, because that is when the report matters most.
+      - name: Write the full report
+        if: ${{ !cancelled() }}
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          version: ${{ env.TRIVY_VERSION }}
+          scan-type: image
+          image-ref: scan/${{ matrix.service }}:${{ github.sha }}
+          severity: HIGH,CRITICAL
+          limit-severities-for-sarif: true
+          format: sarif
+          output: trivy-image.sarif
+          skip-setup-trivy: true # installed by the step above
+      - uses: github/codeql-action/upload-sarif@74c1aea9df7c0f02e9b7bfe4a8935abf2e5e3aa6 # v3.39.5
+        if: ${{ !cancelled() }}
+        with:
+          sarif_file: trivy-image.sarif
+          category: trivy-image-${{ matrix.service }}
+
+  config:
+    name: trivy config
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      security-events: write # upload the findings to the Security tab
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      # Misconfigurations in the Dockerfiles, docker-compose.yml and infra/.
+      # Two MEDIUM findings are accepted and stay visible in the report: the
+      # SQL server accepts public connections (the Container Apps reach it
+      # over the internet; its firewall admits Azure services only, see
+      # infra/database.tf), and auditing is off (it needs a Log Analytics
+      # workspace or storage account, a billed resource the brief excludes).
+      - name: Fail on HIGH or CRITICAL misconfigurations
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          version: ${{ env.TRIVY_VERSION }}
+          scan-type: config
+          scan-ref: .
+          severity: HIGH,CRITICAL
+          exit-code: "1"
+          format: table
+
+      - name: Write the full report
+        if: ${{ !cancelled() }}
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          version: ${{ env.TRIVY_VERSION }}
+          scan-type: config
+          scan-ref: .
+          format: sarif
+          output: trivy-config.sarif
+          skip-setup-trivy: true
+      - uses: github/codeql-action/upload-sarif@74c1aea9df7c0f02e9b7bfe4a8935abf2e5e3aa6 # v3.39.5
+        if: ${{ !cancelled() }}
+        with:
+          sarif_file: trivy-config.sarif
+          category: trivy-config
+
+  secrets:
+    name: gitleaks (full history)
+    runs-on: ubuntu-24.04
+    env:
+      GITLEAKS_VERSION: 8.30.1
+      GITLEAKS_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          # Every commit, not just the latest: a secret deleted in a later
+          # commit is still in the history, and still leaked.
+          fetch-depth: 0
+          persist-credentials: false
+
+      # The gitleaks binary itself (MIT licence), not the gitleaks GitHub
+      # Action, which needs a paid licence key for organisation repositories.
+      - name: Install gitleaks
+        run: >-
+          bash .github/scripts/install-release-binary.sh
+          "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          "$GITLEAKS_SHA256" gitleaks
+
+      # .gitleaksignore lists, by exact fingerprint, the four old findings
+      # checked by hand and known not to be secrets. Anything else fails.
+      # --redact keeps any real secret it finds out of the log.
+      - name: Scan every commit
+        run: gitleaks git --redact --verbose --exit-code 1 .
+
+  policy:
+    name: conftest (our own policies)
+    runs-on: ubuntu-24.04
+    env:
+      CONFTEST_VERSION: 0.71.1
+      CONFTEST_SHA256: c3f6b2a753bd56e377a1e51a95ae3e057f926f2e9139f7d5b5dfbbaf810f7985
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - name: Install conftest
+        run: >-
+          bash .github/scripts/install-release-binary.sh
+          "https://github.com/open-policy-agent/conftest/releases/download/v${CONFTEST_VERSION}/conftest_${CONFTEST_VERSION}_Linux_x86_64.tar.gz"
+          "$CONFTEST_SHA256" conftest
+
+      # The rules are code too: their tests prove each rule passes a good
+      # file and fails a bad one, before the rules are trusted on ours.
+      - name: Test the policies
+        run: |
+          conftest verify --policy policy/dockerfile
+          conftest verify --policy policy/terraform
+
+      - name: Dockerfiles follow policy/dockerfile
+        run: conftest test --policy policy/dockerfile services/*/Dockerfile
+
+      # --combine hands all the .tf files to the rules at once, so a rule can
+      # see every resource wherever it is declared.
+      - name: Terraform follows policy/terraform
+        run: conftest test --parser hcl2 --combine --policy policy/terraform infra/*.tf

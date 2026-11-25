@@ -90,9 +90,7 @@ class TransitionConflict(RuntimeError):
     """The move was legal, but someone else changed the status first."""
 
     def __init__(self, animal_id: int, expected: PlacementStatus) -> None:
-        super().__init__(
-            f"animal {animal_id} is no longer {expected.value}; reload and try again"
-        )
+        super().__init__(f"animal {animal_id} is no longer {expected.value}; reload and try again")
 
 
 class RequestNotFound(LookupError):
@@ -116,9 +114,7 @@ class AdoptionAlreadyApproved(RuntimeError):
     """At most one adoption is approved at a time."""
 
     def __init__(self, animal: Animal) -> None:
-        super().__init__(
-            f"{animal.name} is already pending adoption; decline that adoption or complete it first"
-        )
+        super().__init__(f"{animal.name} is already pending adoption; decline that adoption or complete it first")
 
 
 class RequestConflict(RuntimeError):
@@ -193,9 +189,7 @@ class AnimalRepository(Protocol):
 
     def add_medical_record(self, animal_id: int, record: NewMedicalRecord) -> MedicalRecord: ...
 
-    def medical_records(
-        self, animal_id: int, record_type: MedicalRecordType | None
-    ) -> list[MedicalRecord]: ...
+    def medical_records(self, animal_id: int, record_type: MedicalRecordType | None) -> list[MedicalRecord]: ...
 
 
 class PlacementRepository(Protocol):
@@ -265,9 +259,7 @@ class AnimalService:
         return self._today()
 
     def record_offline_adoption(self, payload: Any) -> OfflineAdoption:
-        return self._repository.add_offline_adoption(
-            NewOfflineAdoption.from_payload(payload, self._today())
-        )
+        return self._repository.add_offline_adoption(NewOfflineAdoption.from_payload(payload, self._today()))
 
     def offline_adoptions(self) -> list[OfflineAdoption]:
         return self._repository.offline_adoptions()
@@ -287,9 +279,7 @@ class AnimalService:
         # A pending animal moved back to available by hand means its approved
         # adoption fell through, exactly as if staff had declined it; leaving it
         # approved would let a second adoption be approved alongside it.
-        fell_through = (
-            animal.status is PlacementStatus.PENDING and request.to is PlacementStatus.AVAILABLE
-        )
+        fell_through = animal.status is PlacementStatus.PENDING and request.to is PlacementStatus.AVAILABLE
         if not self._repository.change_status(
             animal_id,
             animal.status,
@@ -450,4 +440,3 @@ def _photo_url(animal_id: int, version: int | None) -> str | None:
     if version is None:
         return None
     return f"/api/animals/{animal_id}/photo?v={version}"
-

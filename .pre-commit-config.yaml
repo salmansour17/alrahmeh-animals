@@ -1,0 +1,29 @@
+# Checks that run on your machine before each commit, so problems are caught
+# before they reach GitHub (the "shift left" idea). CI runs the same linter
+# again, so skipping these hooks never lets anything through; they only save a
+# round trip. Setup and use: README, "Pre-commit hooks".
+#
+# Each `rev` is a full commit SHA, with the release it belongs to in the
+# `frozen` comment, for the same reason the workflows pin actions to SHAs: a
+# tag can be moved to different code, a commit cannot. `pre-commit autoupdate
+# --freeze` updates both together.
+
+repos:
+  # Ruff, the same version every service pins in requirements.txt. Each file
+  # is checked with the ruff.toml of the service it belongs to.
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: 488940d9de1b658fac229e34c521d75a6ea476f2 # frozen: v0.14.5
+    hooks:
+      - id: ruff
+        args: [--fix]
+        files: ^(services|contracts|security)/
+      - id: ruff-format
+        files: ^(services|contracts|security)/
+
+  # gitleaks looks for secrets (keys, passwords, tokens) in what is about to be
+  # committed, and refuses the commit if it finds one. A secret that reaches
+  # GitHub is compromised even if a later commit deletes it.
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: 83d9cd684c87d95d656c1458ef04895a7f1cbd8e # frozen: v8.30.1
+    hooks:
+      - id: gitleaks

@@ -60,9 +60,7 @@ def create_app(config: Config | None = None, database: Database | None = None) -
     database = database or Database.from_url(config.database_url, appname=config.service)
     app.config["DATABASE"] = database
 
-    app.register_blueprint(
-        create_enquiries_blueprint(EnquiryService(SqlEnquiryRepository(database)))
-    )
+    app.register_blueprint(create_enquiries_blueprint(EnquiryService(SqlEnquiryRepository(database))))
 
     app.register_error_handler(HTTPException, _json_http_error)
     _register_meta_routes(app)

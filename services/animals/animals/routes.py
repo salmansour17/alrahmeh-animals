@@ -68,9 +68,7 @@ CACHE_UNVERSIONED = "no-cache"
 RECEIVED = {"status": "received"}
 
 
-def create_animals_blueprint(
-    service: AnimalService, placements: PlacementService, photos: PhotoService
-) -> Blueprint:
+def create_animals_blueprint(service: AnimalService, placements: PlacementService, photos: PhotoService) -> Blueprint:
     """Build the blueprint around already-constructed services, so the
     choice of repository is made in create_app and nowhere in here."""
     bp = Blueprint("animals", __name__, url_prefix="/api/animals")
@@ -92,9 +90,7 @@ def create_animals_blueprint(
         # Never let a browser guess a different type for these bytes.
         response.headers["X-Content-Type-Options"] = "nosniff"
         current = str(photos.version(animal_id))
-        response.headers["Cache-Control"] = (
-            CACHE_VERSIONED if request.args.get("v") == current else CACHE_UNVERSIONED
-        )
+        response.headers["Cache-Control"] = CACHE_VERSIONED if request.args.get("v") == current else CACHE_UNVERSIONED
         return response
 
     @bp.put("/<int:animal_id>/photo")
@@ -138,8 +134,7 @@ def create_animals_blueprint(
             **public(animal),
             profile=profile(animal_id),
             vaccinations=[
-                {"description": v.description, "occurred_on": v.occurred_on.isoformat()}
-                for v in vaccinations
+                {"description": v.description, "occurred_on": v.occurred_on.isoformat()} for v in vaccinations
             ],
         )
 

@@ -93,9 +93,7 @@ class StripeGateway:
                         "price_data": {
                             "currency": STRIPE_CURRENCY,
                             "unit_amount": fils_to_cents(request.amount_fils),
-                            "product_data": {
-                                "name": f"{PRODUCT_NAME} ({format_jod(request.amount_fils)} JOD)"
-                            },
+                            "product_data": {"name": f"{PRODUCT_NAME} ({format_jod(request.amount_fils)} JOD)"},
                         },
                         "quantity": 1,
                     }
@@ -136,9 +134,7 @@ class StripeGateway:
             return None
 
         metadata = _metadata(session)
-        charge = ProviderCharge(
-            session_id=session.id, amount_minor=session.amount_total, currency=session.currency
-        )
+        charge = ProviderCharge(session_id=session.id, amount_minor=session.amount_total, currency=session.currency)
         return PaymentConfirmed(
             charge=charge,
             # Converted from what Stripe verified it charged, never from what
@@ -148,9 +144,7 @@ class StripeGateway:
             purpose=metadata.get(META_PURPOSE),
             earmarked_animal_id=_positive_int_or_none(metadata.get(META_EARMARKED_ANIMAL_ID)),
             donor_name=metadata.get(META_DONOR_NAME),
-            paid_on=datetime.fromtimestamp(event.created, UTC)
-            .astimezone(self._local_timezone)
-            .date(),
+            paid_on=datetime.fromtimestamp(event.created, UTC).astimezone(self._local_timezone).date(),
         )
 
 

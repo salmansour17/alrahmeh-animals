@@ -16,7 +16,7 @@ from pathlib import Path
 import pytest
 
 SERVICE = Path(__file__).resolve().parent.parent
-OTHER_SERVICES = {'donations', 'enquiries'}
+OTHER_SERVICES = {"donations", "enquiries"}
 SKIP = {"tests", ".venv", "venv", "node_modules", "__pycache__", "data"}
 
 

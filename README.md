@@ -322,6 +322,19 @@ configuration except `PORT=8765`, so it could not clash with a copy on 8000:
 100% line coverage says every line ran, not that every case is covered; ADR-4
 records what the tests deliberately leave thin.
 
+## Pre-commit hooks
+
+Two checks run on your machine before each commit (`.pre-commit-config.yaml`):
+ruff lints and formats the Python, and gitleaks refuses a commit that contains
+something that looks like a secret. CI runs the same checks again, so the hooks
+only save a round trip; they are not the safety net.
+
+```bash
+pip install pre-commit
+pre-commit install            # once per clone: runs the hooks on every commit
+pre-commit run --all-files    # run them on everything, e.g. after changing the config
+```
+
 ## API
 
 | Endpoint | Access | Purpose |

@@ -46,9 +46,7 @@ def test_wrong_password_is_rejected(client):
 def test_username_is_ignored(client, username):
     """There is one shared secret, not a set of accounts, so only the password
     half of the credential is checked."""
-    response = client.get(
-        "/api/meta/schema", headers=_basic_auth(ADMIN_PASSWORD, username=username)
-    )
+    response = client.get("/api/meta/schema", headers=_basic_auth(ADMIN_PASSWORD, username=username))
     assert response.status_code == 200
 
 
@@ -73,13 +71,13 @@ def test_config_repr_never_shows_secrets(monkeypatch):
     """A Config printed in a log line or a failing test must not reveal any
     secret. The values here are dummies, recognisable if they ever leaked."""
     monkeypatch.setenv("ADMIN_PASSWORD", "dummy-admin-VALUE")
-    monkeypatch.setenv("STRIPE_SECRET_KEY", "sk_test_dummyVALUE")
+    monkeypatch.setenv("STRIPE_SECRET_KEY", "sk_test_dummyVALUE")  # gitleaks:allow (made-up test key)
     monkeypatch.setenv("STRIPE_WEBHOOK_SECRET", "whsec_dummyVALUE")
 
     config = load_config()
     shown = repr(config) + str(config)
 
-    assert config.stripe_secret_key == "sk_test_dummyVALUE"
+    assert config.stripe_secret_key == "sk_test_dummyVALUE"  # gitleaks:allow (made-up test key)
     assert "VALUE" not in shown
     assert "sk_test_" not in shown and "whsec_" not in shown
 
@@ -145,8 +143,15 @@ def test_animals_url_is_a_plain_origin_or_the_default(monkeypatch, raw, expected
 
 @pytest.mark.parametrize(
     ("raw", "expected"),
-    [(None, DEFAULT_ANIMALS_TIMEOUT_S), ("0.5", 0.5), ("5", 5.0), ("0", DEFAULT_ANIMALS_TIMEOUT_S),
-     ("-1", DEFAULT_ANIMALS_TIMEOUT_S), ("soon", DEFAULT_ANIMALS_TIMEOUT_S), ("3600", DEFAULT_ANIMALS_TIMEOUT_S)],
+    [
+        (None, DEFAULT_ANIMALS_TIMEOUT_S),
+        ("0.5", 0.5),
+        ("5", 5.0),
+        ("0", DEFAULT_ANIMALS_TIMEOUT_S),
+        ("-1", DEFAULT_ANIMALS_TIMEOUT_S),
+        ("soon", DEFAULT_ANIMALS_TIMEOUT_S),
+        ("3600", DEFAULT_ANIMALS_TIMEOUT_S),
+    ],
 )
 def test_the_animals_timeout_is_always_bounded(monkeypatch, raw, expected):
     """Zero, negative or huge values would defeat the timeout's purpose, so

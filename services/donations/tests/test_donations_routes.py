@@ -19,10 +19,7 @@ from tests.animals_stub import AnimalsStub
 from tests.conftest import ADMIN_PASSWORD
 from tests.test_payments import WEBHOOK_SECRET, _Recorder, event, sign
 
-STAFF = {
-    "Authorization": "Basic "
-    + base64.b64encode(f"staff:{ADMIN_PASSWORD}".encode()).decode("ascii")
-}
+STAFF = {"Authorization": "Basic " + base64.b64encode(f"staff:{ADMIN_PASSWORD}".encode()).decode("ascii")}
 GIFT = {"amount_jod": "25.500", "purpose": "medical_fund", "donor_name": "Um Khaled"}
 
 
@@ -89,9 +86,7 @@ def test_invalid_amounts_are_400(client, amount):
 
 
 def test_validation_errors_never_echo_the_donor_name(client):
-    response = client.post(
-        "/api/donations", json={**GIFT, "donor_name": "Secret Donor", "purpose": "x"}, headers=STAFF
-    )
+    response = client.post("/api/donations", json={**GIFT, "donor_name": "Secret Donor", "purpose": "x"}, headers=STAFF)
     assert response.status_code == 400
     assert "Secret Donor" not in response.get_data(as_text=True)
 
@@ -194,8 +189,9 @@ def test_checkout_urls_ignore_the_host_header(paying_client, monkeypatch):
 
 
 def test_checkout_accepts_json_only(paying_client):
-    response = paying_client.post("/api/donations/checkout", data="amount_jod=5&purpose=general",
-                                  content_type="application/x-www-form-urlencoded")
+    response = paying_client.post(
+        "/api/donations/checkout", data="amount_jod=5&purpose=general", content_type="application/x-www-form-urlencoded"
+    )
     assert response.status_code == 415
 
 
@@ -240,7 +236,7 @@ def test_without_keys_both_payment_endpoints_are_503_and_the_rest_works(client):
 def test_a_live_key_is_refused_by_name_and_never_logged(config, caplog):
     live = replace(
         config,
-        stripe_secret_key="sk_live_dummyLIVEVALUE",
+        stripe_secret_key="sk_live_dummyLIVEVALUE",  # gitleaks:allow (made-up test key)
         stripe_webhook_secret="whsec_dummyWEBHOOKVALUE",
     )
     client = create_app(live).test_client()
@@ -281,4 +277,3 @@ def test_offline_methods_are_read_from_the_environment(monkeypatch):
     config = load_config()
     assert config.cliq_alias == "RAHMEH-DEMO"
     assert config.bank_iban is None
-
