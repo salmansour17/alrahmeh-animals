@@ -9,7 +9,7 @@ pillow==13.0.0
 
 # Test tooling
 pytest==8.3.4
-pytest-cov==6.0.0
+pytest-cov==7.1.0
 # Reads openapi.yaml in tests/test_openapi.py; not used by the service itself
 pyyaml==6.0.3
 # Linter; run as `ruff check .` from this folder (config in ruff.toml)
