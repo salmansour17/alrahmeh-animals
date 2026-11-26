@@ -1,0 +1,12 @@
+success	contracts / system.yaml and OpenAPI
+success	ci / test (animals)
+success	terraform-check / terraform fmt and validate
+success	ci / build image (animals)
+success	ci / test (donations)
+success	ci / build image (enquiries)
+success	ci / test (enquiries)
+success	ci / build image (donations)
+success	push image (donations)
+success	push image (animals)
+success	push image (enquiries)
+success	deploy to Azure
