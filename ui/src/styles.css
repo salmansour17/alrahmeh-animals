@@ -353,6 +353,16 @@ code { background: var(--blush); padding: 0.1rem 0.45rem; border-radius: 8px; }
 .staff-item details summary { cursor: pointer; font-weight: 800; color: var(--orange-deep); }
 .staff-item details[open] { display: grid; gap: 0.5rem; }
 .staff-line { padding: 0.4rem 0; border-bottom: 1px dashed var(--taupe-deep); }
+/* Ledger corrections (staff portal). The badges say "Reversal" and
+   "Reversed" in words and the reversed amount is struck through, so the
+   state never depends on colour alone. Logical properties, so the layout
+   holds right to left. */
+.badge-reversal { background: #fde1d1; color: var(--orange-deep); }
+.badge-reversed { background: var(--taupe); color: var(--ink); }
+.staff-line.is-reversed { opacity: 0.8; }
+.staff-line .quote { display: block; margin-block-start: 0.35rem; }
+.button.button-small { padding-block: 0.25rem; padding-inline: 0.8rem; font-size: 0.85rem; }
+.reverse-step { margin-block-start: 0.5rem; padding: 0.75rem; border-radius: 12px; background: var(--paper); }
 .quote { background: var(--paper); border-radius: 12px; padding: 0.55rem 0.8rem; white-space: pre-wrap; }
 .row { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; }
 .row input:not([type="file"]) { flex: 1; min-width: 8rem; }

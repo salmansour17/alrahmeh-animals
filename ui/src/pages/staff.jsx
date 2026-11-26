@@ -2,7 +2,7 @@
 // password in memory only. Each action calls the same @require_admin endpoints
 // the README's commands use, so the server stays the only judge of what is
 // allowed: a refused action shows the server's own message.
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { api, assetUrl, staffApi, useApi, useSubmit } from "../api.js";
 
@@ -306,12 +306,7 @@ function OfflineTab({ client }) {
         </form>
         <h3>Latest donations</h3>
         <Listing state={donations} empty="None yet." items={(data) => data.donations}>
-          {(d) => (
-            <li key={d.id} className="staff-line">
-              {d.received_on} · <strong>{d.amount_jod} JOD</strong> · {d.purpose.replace("_", " ")}
-              {d.donor_name && ` · ${d.donor_name}`}
-            </li>
-          )}
+          {(d) => <DonationLine key={d.id} donation={d} client={client} onReversed={refresh} />}
         </Listing>
       </section>
 
@@ -628,6 +623,101 @@ function Listing({ state, empty, items, children }) {
   if (state.status === "error") return <p className="error">{state.error.message}</p>;
   const list = items(state.data);
   return list.length === 0 ? <p className="muted">{empty}</p> : <ul className="staff-list">{list.map(children)}</ul>;
+}
+
+// One ledger row. The ledger is never edited, so a mistake is corrected by a
+// reversal: a new row that cancels the gift, which the homepage totals
+// subtract. A reversed gift says so in words (and is struck through), a
+// reversal links to the gift it cancels, and neither can be reversed again.
+// Every value is rendered as text by React, never as HTML; names and reasons
+// typed by people get dir="auto" so Arabic reads right to left.
+function DonationLine({ donation: d, client, onReversed }) {
+  const [confirming, setConfirming] = useState(false);
+  const reverse = useSubmit(({ reason }) => client.reverseDonation(d.id, reason));
+  const reasonField = useRef(null);
+  const reverseButton = useRef(null);
+  const reversed = d.kind === "gift" && d.reversed_by_id !== null;
+
+  useEffect(() => {
+    if (confirming) reasonField.current?.focus();
+  }, [confirming]);
+
+  function close() {
+    setConfirming(false);
+    // Back to the button that opened the step, so keyboard users keep their place.
+    requestAnimationFrame(() => reverseButton.current?.focus());
+  }
+
+  async function onConfirm(event) {
+    event.preventDefault();
+    const reason = new FormData(event.currentTarget).get("reason").trim();
+    if (await reverse.submit({ reason })) onReversed();
+  }
+
+  const amount = <strong>{d.amount_jod} JOD</strong>;
+  return (
+    <li id={`donation-${d.id}`} className={`staff-line${reversed ? " is-reversed" : ""}`}>
+      <span className="muted">#{d.id}</span> · {d.received_on} · {reversed ? <s>{amount}</s> : amount} ·{" "}
+      {d.purpose.replace("_", " ")}
+      {d.donor_name && (
+        <>
+          {" · "}
+          <bdi dir="auto">{d.donor_name}</bdi>
+        </>
+      )}
+      {d.kind === "reversal" && (
+        <>
+          {" "}
+          <span className="badge badge-reversal">Reversal</span> of{" "}
+          <a href={`#donation-${d.reverses_donation_id}`}>#{d.reverses_donation_id}</a>
+          <span className="quote small" dir="auto">
+            {d.reversal_reason}
+          </span>
+        </>
+      )}
+      {reversed && (
+        <>
+          {" "}
+          <span className="badge badge-reversed">Reversed</span> by{" "}
+          <a href={`#donation-${d.reversed_by_id}`}>#{d.reversed_by_id}</a>
+        </>
+      )}
+      {d.reversible && !confirming && (
+        <>
+          {" "}
+          <button
+            ref={reverseButton}
+            type="button"
+            className="button button-soft button-small"
+            onClick={() => setConfirming(true)}
+          >
+            Reverse
+          </button>
+        </>
+      )}
+      {d.reversible && confirming && (
+        <form className="form reverse-step" onSubmit={onConfirm} aria-label={`Reverse donation #${d.id}`}>
+          <label>
+            Why is this donation being reversed?
+            <textarea ref={reasonField} name="reason" required maxLength={500} rows={2} dir="auto" />
+          </label>
+          <p className="muted small">
+            This adds a reversal that cancels {d.amount_jod} JOD in the totals. Nothing is deleted, and a card
+            payment is not refunded at the provider.
+          </p>
+          <Outcome state={reverse} done="Reversed." />
+          <p className="row">
+            <button className="button" type="submit" disabled={reverse.sending}>
+              Reverse donation
+            </button>
+            <button type="button" className="button button-soft" onClick={close} disabled={reverse.sending}>
+              Cancel
+            </button>
+          </p>
+        </form>
+      )}
+    </li>
+  );
 }
 
 function Outcome({ state, done }) {
