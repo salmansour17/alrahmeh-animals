@@ -192,14 +192,34 @@ paths:
           schema: {type: integer, minimum: 0, default: 0}
       responses:
         "200":
-          description: A page of donations
+          description: >
+            A page of donations, with each earmarked animal's name from the
+            animals service: one request for the whole page, cached for a few
+            minutes (ANIMAL_NAMES_TTL_S). If the animals service cannot answer,
+            the page still loads, animal_names is "unavailable" and every name
+            is null.
           content:
             application/json:
               schema:
                 type: object
-                required: [donations]
+                required: [donations, animal_names]
                 properties:
-                  donations: {type: array, items: {$ref: "#/components/schemas/Donation"}}
+                  donations:
+                    type: array
+                    items:
+                      allOf:
+                        - {$ref: "#/components/schemas/Donation"}
+                        - type: object
+                          required: [earmarked_animal_name]
+                          properties:
+                            earmarked_animal_name:
+                              type: string
+                              nullable: true
+                              description: Null without an earmark, when the names are unavailable, or for an id the animals service does not know
+                  animal_names:
+                    type: string
+                    enum: [ok, unavailable]
+                    description: Whether the animals service answered for this page's names
         "400": {$ref: "#/components/responses/BadRequest"}
         "401": {$ref: "#/components/responses/Unauthorised"}
         "503": {$ref: "#/components/responses/StaffDisabled"}

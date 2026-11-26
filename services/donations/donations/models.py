@@ -248,6 +248,24 @@ class ImpactSummary:
 
 
 @dataclass(frozen=True)
+class DonationPage:
+    """A page of the staff donation list, with the earmarked animals' names.
+
+    animal_names holds the names the animals service gave for this page's
+    earmarked animals; names_available is False when it could not answer, so
+    the list still loads and shows ids instead of names."""
+
+    donations: list[Donation]
+    animal_names: Mapping[int, str]
+    names_available: bool
+
+    def name_of(self, donation: Donation) -> str | None:
+        if donation.earmarked_animal_id is None:
+            return None
+        return self.animal_names.get(donation.earmarked_animal_id)
+
+
+@dataclass(frozen=True)
 class LedgerSum:
     """One group of ledger rows as the database adds them up: every row of one
     purpose and one kind."""

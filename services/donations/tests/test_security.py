@@ -163,6 +163,31 @@ def test_the_animals_timeout_is_always_bounded(monkeypatch, raw, expected):
     assert load_config().animals_timeout_s == expected
 
 
+@pytest.mark.parametrize(
+    ("name", "raw", "expected"),
+    [
+        ("ANIMAL_NAMES_TTL_S", None, 300),
+        ("ANIMAL_NAMES_TTL_S", "60", 60),
+        ("ANIMAL_NAMES_TTL_S", "0", 300),
+        ("ANIMAL_NAMES_TTL_S", "3601", 300),
+        ("ANIMAL_NAMES_TTL_S", "5 minutes", 300),
+        ("ANIMAL_NAMES_CACHE_SIZE", None, 1000),
+        ("ANIMAL_NAMES_CACHE_SIZE", "50", 50),
+        ("ANIMAL_NAMES_CACHE_SIZE", "-3", 1000),
+        ("ANIMAL_NAMES_CACHE_SIZE", "1e9", 1000),
+    ],
+)
+def test_the_name_cache_settings_are_bounded(monkeypatch, name, raw, expected):
+    """A zero or negative time to live or size would make the cache useless or
+    unbounded, so like PORT they fall back to the default with a warning."""
+    if raw is None:
+        monkeypatch.delenv(name, raising=False)
+    else:
+        monkeypatch.setenv(name, raw)
+    field = {"ANIMAL_NAMES_TTL_S": "animal_names_ttl_s", "ANIMAL_NAMES_CACHE_SIZE": "animal_names_cache_size"}[name]
+    assert getattr(load_config(), field) == expected
+
+
 # --- no web pages any more ----------------------------------------------------
 
 

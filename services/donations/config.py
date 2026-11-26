@@ -34,6 +34,11 @@ DEFAULT_ANIMALS_URL = "http://animals:8000"
 # Every call to the animals service gives up after this many seconds, so a slow
 # or stopped animals service can never hang a request here.
 DEFAULT_ANIMALS_TIMEOUT_S = 2.0
+# The staff list's animal names are kept this long before being asked for
+# again (name_cache.py): a renamed animal shows its new name within minutes.
+DEFAULT_ANIMAL_NAMES_TTL_S = 300
+# At most this many names are kept, so the cache cannot grow without bound.
+DEFAULT_ANIMAL_NAMES_CACHE_SIZE = 1000
 
 
 @dataclass(frozen=True)
@@ -65,6 +70,8 @@ class Config:
     bank_account_name: str | None = None
     animals_url: str = DEFAULT_ANIMALS_URL
     animals_timeout_s: float = DEFAULT_ANIMALS_TIMEOUT_S
+    animal_names_ttl_s: int = DEFAULT_ANIMAL_NAMES_TTL_S
+    animal_names_cache_size: int = DEFAULT_ANIMAL_NAMES_CACHE_SIZE
     # Website origins allowed to call this service from a browser (cors.py).
     cors_origins: frozenset[str] = frozenset()
     # The git commit this build came from, set at image build time (GIT_SHA);
@@ -94,6 +101,8 @@ def load_config() -> Config:
         bank_account_name=_read_optional("BANK_ACCOUNT_NAME"),
         animals_url=_read_animals_url(),
         animals_timeout_s=_read_timeout("ANIMALS_TIMEOUT_S", DEFAULT_ANIMALS_TIMEOUT_S),
+        animal_names_ttl_s=_read_int("ANIMAL_NAMES_TTL_S", DEFAULT_ANIMAL_NAMES_TTL_S, 1, 3600),
+        animal_names_cache_size=_read_int("ANIMAL_NAMES_CACHE_SIZE", DEFAULT_ANIMAL_NAMES_CACHE_SIZE, 1, 100_000),
     )
 
 
@@ -163,6 +172,24 @@ def _read_timeout(name: str, default: float) -> float:
         logger.warning("%s=%s is out of range (0-60]; using %s", name, raw, default)
         return default
     return seconds
+
+
+def _read_int(name: str, default: int, minimum: int, maximum: int) -> int:
+    """A whole number within [minimum, maximum]; anything else falls back to
+    the default with a warning, as PORT does, rather than stopping an
+    unattended start over a typo."""
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        logger.warning("%s=%r is not a whole number; using %d", name, raw, default)
+        return default
+    if not minimum <= value <= maximum:
+        logger.warning("%s=%d is out of range [%d-%d]; using %d", name, value, minimum, maximum, default)
+        return default
+    return value
 
 
 def _read_port() -> int:

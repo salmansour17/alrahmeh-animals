@@ -23,12 +23,13 @@ from werkzeug.routing import IntegerConverter
 from config import Config, load_config
 from cors import enable_cors
 from db import Database
-from donations.animals_client import HttpAnimalDirectory
+from donations.animals_client import HttpAnimalDirectory, HttpAnimalNames
 from donations.models import OfflineMethods
+from donations.name_cache import CachedAnimalNames
 from donations.payments import StripeGateway
 from donations.repository import SqlDonationRepository
 from donations.routes import create_donations_blueprint
-from donations.service import AnimalDirectory, DonationService, PaymentGateway
+from donations.service import AnimalDirectory, AnimalNames, DonationService, PaymentGateway
 from security import require_admin
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
@@ -73,13 +74,15 @@ def create_app(
     config: Config | None = None,
     animals: AnimalDirectory | None = None,
     database: Database | None = None,
+    animal_names: AnimalNames | None = None,
 ) -> Flask:
     """Build the service.
 
     Taking Config as an argument rather than reading the environment here is
     what lets tests build an app against their own database without mutating
     os.environ. `animals` lets a test hand in a stand-in for the animals
-    service; left out, the real HTTP adapter is used. Building the app touches
+    service, and `animal_names` one for the names on the staff list; left
+    out, the real HTTP adapters are used. Building the app touches
     no database: migrations run before it, once.
     """
     config = config or load_config()
@@ -100,6 +103,14 @@ def create_app(
         animals=animals or HttpAnimalDirectory(config.animals_url, config.animals_timeout_s),
         today=amman_today,
         gateway=_payment_gateway(config),
+        # The staff list's names: the same animals service, a separate client,
+        # and a cache in front of it. The earmark check above never sees it.
+        names=animal_names
+        or CachedAnimalNames(
+            HttpAnimalNames(config.animals_url, config.animals_timeout_s),
+            ttl_s=config.animal_names_ttl_s,
+            max_entries=config.animal_names_cache_size,
+        ),
     )
     offline = OfflineMethods(
         cliq_alias=config.cliq_alias,

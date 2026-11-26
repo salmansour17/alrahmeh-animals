@@ -71,6 +71,8 @@ services:
       PUBLIC_BASE_URL: { default: "http://localhost:5173", description: "The website's origin, where Stripe sends donors back after paying" }
       ANIMALS_URL: { default: "http://animals:8000", description: "Base URL of the animals service" }
       ANIMALS_TIMEOUT_S: { default: 2, description: "Deadline in seconds for a whole call to the animals service" }
+      ANIMAL_NAMES_TTL_S: { default: 300, description: "Seconds the staff list keeps an animal's name before asking again (1-3600); names only, never the earmark check" }
+      ANIMAL_NAMES_CACHE_SIZE: { default: 1000, description: "Most animal names kept in memory at once (1-100000); the oldest go first" }
       CLIQ_ALIAS: { default: "", description: "The rescue's CliQ alias for the donate page; empty hides it" }
       BANK_NAME: { default: "", description: "Bank name for bank transfers on the donate page" }
       BANK_IBAN: { default: "", description: "IBAN for bank transfers; with BANK_ACCOUNT_NAME, shows the bank option" }
@@ -81,7 +83,7 @@ services:
     calls:
       - service: animals
         url_env: ANIMALS_URL
-        endpoints: ["GET /api/animals/{animal_id}"]
+        endpoints: ["GET /api/animals/{animal_id}", "GET /api/animals/names"]
         timeout_s: 2
         on_failure: >
           Staff recording an earmarked cash or bank donation get a 503 asking
@@ -89,7 +91,9 @@ services:
           card checkout goes ahead with the earmark unverified, and the
           payment webhook records the gift and logs it for staff. Donations
           without an earmark, reversals and the impact figures never call
-          animals.
+          animals. The staff list asks for its earmarked animals' names in
+          one call (cached for ANIMAL_NAMES_TTL_S); if that fails, the list
+          still loads and shows ids. The earmark check never uses the cache.
     azure:
       container_app: <PREFIX>-donations
       sql_database: <PREFIX>-donations-db
