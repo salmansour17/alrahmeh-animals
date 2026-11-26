@@ -113,7 +113,7 @@ presentation edge, since 25000 fils has to display as 25.000 JOD.
 ## 4. Test the rules against real SQLite, exhaustively where the domain is small
 
 Date: 2026-09-30
-Status: Decided
+Status: Superseded by [9]
 
 Context: Section 4 asks for 70% coverage of the business logic of both domains,
 and the parts most likely to be wrong are the ones a coverage figure cannot see:
@@ -454,3 +454,114 @@ in-place command. The reason for creating the databases with `az` instead of
 Terraform was the free offer, which no longer applies; they stay with `az`
 for now because they already exist, and moving them into Terraform would mean
 importing them.
+
+## 9. What CI and CD block on, and what is deliberately not tested
+
+Date: 2026-11-27
+Status: Decided
+
+Context: ADR-4 tested the rules against real SQLite in one process. Since then
+the system became three services, each with its own SQL Server database, a
+call between two of them, containers, a pipeline that deploys every push to
+`main` to Azure, and security checks. A test suite can now pass while the
+system fails: during this assignment, every test passed while an animal
+lookup took 3.4 seconds on Azure (four TLS logins from Germany to Spain,
+which a database on the same machine never shows), and again while the
+images lacked two new modules and could not start. The pipeline has to catch
+what it can, and this entry has to say plainly what it does not.
+
+Decision: Every push to a branch and every pull request runs five workflows;
+on `main`, `cd.yml` calls the same five and deploys only if all of them pass
+on that commit (`needs: [ci, contracts, terraform-check, security, scanners]`).
+What each one blocks on, as the workflow files have it on this date:
+
+- `ci.yml`, per service: `ruff check`; `ruff format --check`; `pytest
+  --cov-fail-under=70` against a real SQL Server 2022 service container,
+  pinned by digest, which includes tests that every Flask route is in
+  `openapi.yaml` and every documented operation has a route; and a
+  `docker build` of the image.
+- `contracts.yml`: `system.yaml` against `system.schema.json`; each
+  `openapi.yaml` is valid OpenAPI and documents `/health`; every environment
+  variable the code reads is listed in `system.yaml`; both calls from
+  donations to animals are listed, documented, and answered with exactly the
+  status codes and path parameters the client handles.
+- `terraform.yml`: `terraform fmt -check` and `terraform validate`, with no
+  Azure credentials (`init -backend=false`).
+- `security.yml`: Trivy on each built image (fixable HIGH or CRITICAL fails)
+  and on the configuration; gitleaks over the whole Git history; Conftest
+  with our own Rego policies on the Dockerfiles and the Terraform, after
+  `conftest verify` has tested the policies themselves. It also runs weekly.
+- `scanners.yml`: the hand-written scanners' own tests (95% coverage), then
+  `security/sast.py` on the services and the website, and
+  `security/sca.py` per service, each in a fresh environment holding only its
+  requirements, and for the website's lock file.
+
+Within `cd.yml`, after the images are pushed: Terraform applies, the
+databases are created if missing, the website's Content-Security-Policy is
+completed from `config.js` (the deploy fails if any address is not allowed),
+and every service must answer `/health` with 200 within five minutes. A last
+step prints each service's start-up log, so the migration lines stay in the
+run's log; it only warns, never fails.
+
+The cross-seam test uses a stand-in for the animals service, served over real
+HTTP on a local port (`tests/animals_stub.py`), not docker compose: CI does not
+run compose, and starting four containers per run would cost minutes for
+little more. The real donations app, with its real HTTP adapters and name
+cache, is pointed at the stand-in. The tests prove both server-to-server flows
+(the earmark check and the batched names), their timeouts, and what happens
+when the animals service is down, slow, refusing or answering nonsense. What
+they cannot prove is that the real animals service answers the same way. The
+contract check covers part of that: the client's paths, status codes and
+path parameters must match the animals `openapi.yaml`, and the animals tests
+check that every route it serves is in that file. Nothing checks the shape
+of its answers against the file's schemas: the stand-in's answers are written
+by hand to match, and a change to a response body would not fail CI. That gap
+is accepted for now; compose before submission is the check.
+
+Alternatives considered: **Compose in CI** for the cross-seam test was
+rejected for the cost above; it is run by hand before submission instead.
+**One coverage figure for everything**, routes and shared modules included,
+would be higher and say less: the 70% gate measures each service's domain
+package (`routes.py` excluded, as in ADR-4), and the shared modules have their
+own tests that the figure does not count. **Mocks for the database** stay
+rejected for ADR-4's reason; every test talks to SQL Server. **Running
+`terraform plan` in CI** was rejected because it needs Azure credentials and
+wakes nothing useful; CI never touches Azure.
+
+Consequences: Three things are not enforced, and I should not claim they are.
+First, `main` is not protected: GitHub would let me merge a pull request whose
+checks failed. Only the deploy is guarded, because `cd.yml` will not deploy a
+commit that fails its checks. Requiring the checks before merging is a GitHub
+setting, not code. Second, the website has no automated tests and no linter
+in CI; it is checked in a browser by hand. Third, the coverage gate does not
+measure `db.py`, `hardening.py`, `security.py` or the composition roots, even
+though they have tests.
+
+Deliberately not tested, with the reason:
+
+- Stripe's live API. Tests use a fake gateway and locally signed webhooks;
+  real test-mode payments are checked by hand with the Stripe CLI (ADR-5).
+- Refunds. A reversal is a ledger entry only and refunds nothing at the
+  provider; there is no refund to test.
+- Scale to zero and cold starts. They happen only on Azure; they are
+  recorded as evidence (`docs/evidence/`), not asserted.
+- The ingress's real `X-Forwarded-For` header. The rate limiter trusts one
+  proxy hop, the right number for Container Apps, but only a live request
+  could confirm it.
+- `terraform apply`, the Azure log step and the CSP step. They run only in
+  CD; the log step was tested with a stand-in `az`, and the CSP step locally
+  in a browser.
+
+Accepted limitations, recorded where the code is: rate-limit counts live in
+memory and reset when an app scales to zero; each service counts wrong
+passwords on its own, so the budget is per service; a reversal refunds
+nothing; a name on the staff list can be up to `ANIMAL_NAMES_TTL_S` (5
+minutes) old; and each container runs one gunicorn worker with four threads,
+so those limits and the cache are shared, at the cost that one CPU-heavy
+request slows the others.
+
+Lessons kept as tests: a test now fails if a module is missing from its
+image's `COPY` line; one fails if the copies of a shared module differ between
+services; one fails if `app.py` defines anything after its `__main__` block;
+and the timing tests check how long a call took, not which of two racing
+timeouts named the error.
