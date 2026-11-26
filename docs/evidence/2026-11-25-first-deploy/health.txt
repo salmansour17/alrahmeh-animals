@@ -1,0 +1,3 @@
+animals {"db":"ok","status":"ok","version":"a8d3a8febd56bf8a828c499def75aa37e74d167e"}
+donations {"db":"ok","status":"ok","version":"a8d3a8febd56bf8a828c499def75aa37e74d167e"}
+enquiries {"db":"ok","status":"ok","version":"a8d3a8febd56bf8a828c499def75aa37e74d167e"}

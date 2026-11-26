@@ -1,0 +1,10 @@
+2026-11-25T22:38:52.0532634Z Apply complete! Resources: 0 added, 4 changed, 0 destroyed.
+2026-11-25T22:38:58.7260670Z snsour-ieu2024-animals-db exists; left as it is
+2026-11-25T22:38:59.8712965Z snsour-ieu2024-donations-db exists; left as it is
+2026-11-25T22:39:01.0366286Z snsour-ieu2024-enquiries-db exists; left as it is
+2026-11-25T22:39:07.8612510Z   animalsUrl: "https://snsour-ieu2024-animals.politewater-5e265943.germanywestcentral.azurecontainerapps.io",
+2026-11-25T22:39:07.8613661Z   donationsUrl: "https://snsour-ieu2024-donations.politewater-5e265943.germanywestcentral.azurecontainerapps.io",
+2026-11-25T22:39:07.8615436Z   enquiriesUrl: "https://snsour-ieu2024-enquiries.politewater-5e265943.germanywestcentral.azurecontainerapps.io",
+2026-11-25T22:39:23.1521858Z animals healthy: {"db":"ok","status":"ok","version":"4e9c4709e5e6534771e6c0c763c468ef2c90b7af"}
+2026-11-25T22:39:24.2958964Z donations healthy: {"db":"ok","status":"ok","version":"4e9c4709e5e6534771e6c0c763c468ef2c90b7af"}
+2026-11-25T22:39:25.5856606Z enquiries healthy: {"db":"ok","status":"ok","version":"4e9c4709e5e6534771e6c0c763c468ef2c90b7af"}

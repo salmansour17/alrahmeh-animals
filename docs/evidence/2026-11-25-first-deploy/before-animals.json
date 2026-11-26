@@ -1,0 +1,58 @@
+{
+    "animals": [
+        {
+            "breed": "Domestic shorthair",
+            "id": 1,
+            "intake_date": "2026-10-17",
+            "name": "Luna",
+            "photo_url": null,
+            "species": "Cat",
+            "status": "available"
+        },
+        {
+            "breed": "Mixed",
+            "id": 2,
+            "intake_date": "2026-11-14",
+            "name": "Simba",
+            "photo_url": null,
+            "species": "Kitten",
+            "status": "available"
+        },
+        {
+            "breed": "Canaan dog mix",
+            "id": 3,
+            "intake_date": "2026-08-28",
+            "name": "Rocky",
+            "photo_url": null,
+            "species": "Dog",
+            "status": "available"
+        },
+        {
+            "breed": "Saluki mix",
+            "id": 4,
+            "intake_date": "2026-11-01",
+            "name": "Bella",
+            "photo_url": null,
+            "species": "Dog",
+            "status": "available"
+        },
+        {
+            "breed": "Mixed",
+            "id": 5,
+            "intake_date": "2026-07-29",
+            "name": "Zaytoon",
+            "photo_url": null,
+            "species": "Dog",
+            "status": "fostering"
+        },
+        {
+            "breed": "Labrador mix",
+            "id": 6,
+            "intake_date": "2026-05-10",
+            "name": "Max",
+            "photo_url": null,
+            "species": "Dog",
+            "status": "adopted"
+        }
+    ]
+}

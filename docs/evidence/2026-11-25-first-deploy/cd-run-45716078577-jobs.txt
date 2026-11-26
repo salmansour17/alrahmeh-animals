@@ -1,0 +1,18 @@
+success	ci / build image (enquiries)
+success	ci / build image (donations)
+success	security / trivy image (donations)
+success	ci / test (donations)
+success	ci / test (animals)
+success	contracts / system.yaml and OpenAPI
+success	ci / build image (animals)
+success	ci / test (enquiries)
+success	security / gitleaks (full history)
+success	security / conftest (our own policies)
+success	terraform-check / terraform fmt and validate
+success	security / trivy config
+success	security / trivy image (animals)
+success	security / trivy image (enquiries)
+success	push image (enquiries)
+success	push image (donations)
+success	push image (animals)
+success	deploy to Azure
