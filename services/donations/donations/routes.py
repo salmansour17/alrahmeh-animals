@@ -80,8 +80,11 @@ def create_donations_blueprint(service: DonationService, offline: OfflineMethods
     @bp.get("")
     @require_admin
     def list_donations():
-        donations = service.list_donations(request.args.get("limit"), request.args.get("offset"))
-        return jsonify(donations=[_donation(d) for d in donations])
+        page = service.donation_page(request.args.get("limit"), request.args.get("offset"))
+        return jsonify(
+            donations=[{**_donation(d), "earmarked_animal_name": page.name_of(d)} for d in page.donations],
+            animal_names="ok" if page.names_available else "unavailable",
+        )
 
     @bp.get("/<int:donation_id>")
     @require_admin

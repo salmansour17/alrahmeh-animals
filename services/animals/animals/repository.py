@@ -11,6 +11,7 @@ involved.
 
 from __future__ import annotations
 
+import json
 from datetime import date, datetime
 from typing import Any
 
@@ -76,6 +77,22 @@ class SqlAnimalRepository:
                 (animal_id,),
             ).fetchone()
         return _to_animal(row) if row else None
+
+    def names(self, animal_ids: tuple[int, ...]) -> dict[int, str]:
+        """The names of the animals with these ids, in one query. Ids with no
+        animal are simply absent.
+
+        The ids travel as one JSON array parameter that OPENJSON turns into
+        rows, so the SQL text is the same whatever the number of ids: nothing
+        is pasted into it, and SQL Server can reuse one plan.
+        """
+        with self._database.unit_of_work() as connection:
+            rows = connection.execute(
+                "SELECT a.id, a.name FROM animals AS a "
+                "JOIN OPENJSON(%s) WITH (id BIGINT '$') AS wanted ON wanted.id = a.id",
+                (json.dumps(list(animal_ids)),),
+            ).fetchall()
+        return {row["id"]: row["name"] for row in rows}
 
     def list(self, status: PlacementStatus | None) -> list[Animal]:
         with self._database.unit_of_work() as connection:

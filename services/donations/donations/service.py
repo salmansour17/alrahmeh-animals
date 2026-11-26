@@ -9,7 +9,7 @@ create_app supplies the concrete objects.
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from datetime import date
 from enum import StrEnum
 from typing import Any, Protocol
@@ -20,6 +20,7 @@ from donations.models import (
     CheckoutRequest,
     CheckoutSession,
     Donation,
+    DonationPage,
     DonationPurpose,
     ImpactSummary,
     NewDonation,
@@ -110,6 +111,17 @@ class AnimalDirectory(Protocol):
     def exists(self, animal_id: int) -> bool: ...
 
 
+class AnimalNames(Protocol):
+    """Names for the staff list's earmarked animals, many ids at once.
+
+    For display only, so it may be answered from a cache (name_cache.py). The
+    earmark check never uses it: it goes through AnimalDirectory, always live.
+    Raises AnimalsUnavailable when the animals service cannot answer; an id it
+    does not know is simply absent."""
+
+    def names(self, animal_ids: Iterable[int]) -> dict[int, str]: ...
+
+
 class DonationRepository(Protocol):
     def add(self, donation: NewDonation) -> Donation: ...
 
@@ -131,6 +143,7 @@ class DonationService:
         animals: AnimalDirectory,
         today: Callable[[], date],
         gateway: PaymentGateway | None = None,
+        names: AnimalNames | None = None,
     ) -> None:
         # No default for `today`: whoever builds the service must say which
         # calendar "today" is in, because a UTC server and staff in Amman
@@ -140,6 +153,9 @@ class DonationService:
         self._today = today
         # None means card donations are unavailable; see create_app for why.
         self._gateway = gateway
+        # None means the staff list shows ids only, as if the animals service
+        # never answered.
+        self._names = names
 
     def record(self, payload: Any) -> Donation:
         """Record a donation staff received in cash or by bank transfer. Card
@@ -248,6 +264,23 @@ class DonationService:
 
     def list_donations(self, limit: str | None = None, offset: str | None = None) -> list[Donation]:
         return self._repository.list(PageRequest.from_query(limit, offset))
+
+    def donation_page(self, limit: str | None = None, offset: str | None = None) -> DonationPage:
+        """A page of the staff list with its earmarked animals' names, asked
+        for in one call however many donations share an animal (ADR-6: the
+        second server-to-server flow). If the animals service cannot answer,
+        the page still loads, with names_available False."""
+        donations = self.list_donations(limit, offset)
+        ids = {d.earmarked_animal_id for d in donations if d.earmarked_animal_id is not None}
+        if not ids:
+            return DonationPage(donations, {}, names_available=True)
+        if self._names is None:
+            return DonationPage(donations, {}, names_available=False)
+        try:
+            return DonationPage(donations, self._names.names(ids), names_available=True)
+        except AnimalsUnavailable:
+            # Logged by the adapter; a display detail is no reason to fail.
+            return DonationPage(donations, {}, names_available=False)
 
     def impact(self) -> ImpactSummary:
         return self._repository.impact()

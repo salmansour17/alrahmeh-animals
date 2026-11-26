@@ -104,10 +104,10 @@ def test_an_unknown_host_is_unavailable_not_missing(monkeypatch):
 
 
 def test_a_call_that_starts_after_its_deadline_is_not_sent(stub):
-    from donations.animals_client import _get_status
+    from donations.animals_client import _get
 
     with pytest.raises(AnimalsUnavailable, match="no time left"):
-        _get_status(f"{stub.url}/api/animals/7", deadline=time.monotonic() - 1)
+        _get(f"{stub.url}/api/animals/7", deadline=time.monotonic() - 1)
     assert stub.requests == []
 
 

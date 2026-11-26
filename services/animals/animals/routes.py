@@ -110,6 +110,15 @@ def create_animals_blueprint(service: AnimalService, placements: PlacementServic
         urls = photos.photo_urls([animal.id for animal in animals])
         return jsonify(animals=[{**_public(animal), "photo_url": urls[animal.id]} for animal in animals])
 
+    # Called by the donations service, server to server, to show the animals
+    # on its staff list by name: many ids, one request (system.yaml, calls).
+    # Public, like GET /<id>, which already shows every animal's name. A
+    # literal path, so the <int:animal_id> route below can never take it.
+    @bp.get("/names")
+    def animal_names():
+        names = service.names(request.args.get("ids"))
+        return jsonify(animals=[{"id": animal_id, "name": names[animal_id]} for animal_id in sorted(names)])
+
     @bp.get("/stats")
     def placement_stats():
         counts = {status.value: count for status, count in service.placement_counts().items()}

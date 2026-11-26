@@ -125,19 +125,51 @@ def check_calls(system: dict, documents: dict[str, dict]) -> None:
                 else:
                     ok(f"{caller} -> {target}: {endpoint} is documented by {target}")
 
-    # The one call in this system, checked against the code that makes it.
+    # The calls in this system, each checked against the code that makes it:
+    # (method constant, path constant, answers constant) in the donations client.
     client = client_constants(ROOT / "services/donations/donations/animals_client.py")
-    endpoint = f"{client['ANIMAL_METHOD']} {client['ANIMAL_PATH']}"
     calls = [
         c for c in services["donations"].get("calls", []) if c["service"] == "animals"
     ]
-    if not calls or endpoint not in calls[0]["endpoints"]:
+    if not calls:
+        problem("system.yaml lists no call from donations to animals")
+        return
+    for method_name, path_name, answers_name in CLIENT_CALLS:
+        check_client_call(
+            documents["animals"],
+            calls[0],
+            client[method_name],
+            client[path_name],
+            set(client[answers_name]),
+        )
+    timeout = services["donations"]["env"]["ANIMALS_TIMEOUT_S"]["default"]
+    if calls[0]["timeout_s"] != timeout:
+        problem(
+            f"donations: calls timeout_s {calls[0]['timeout_s']} differs from ANIMALS_TIMEOUT_S default {timeout}"
+        )
+
+
+# Each request the donations client makes to the animals service: the earmark
+# check (one animal, never cached) and the batched names for the staff list.
+CLIENT_CALLS = [
+    ("ANIMAL_METHOD", "ANIMAL_PATH", "ANSWERS"),
+    ("NAMES_METHOD", "NAMES_PATH", "NAMES_ANSWERS"),
+]
+
+
+def check_client_call(
+    animals: dict, call: dict, method: str, path: str, answers: set[int]
+) -> None:
+    """One client request against system.yaml and the animals openapi.yaml:
+    listed, documented, the same status codes, the same path parameters."""
+    endpoint = f"{method} {path}"
+    if endpoint not in call["endpoints"]:
         problem(f"donations' client calls {endpoint}, which system.yaml does not list")
         return
-    answers = set(client["ANSWERS"])
-    documented = operation(
-        documents["animals"], client["ANIMAL_METHOD"], client["ANIMAL_PATH"]
-    )
+    documented = operation(animals, method, path)
+    if documented is None:
+        problem(f"donations' client calls {endpoint}, which animals does not document")
+        return
     codes = {int(code) for code in documented["responses"]}
     if codes != answers:
         problem(
@@ -147,31 +179,24 @@ def check_calls(system: dict, documents: dict[str, dict]) -> None:
         ok(
             f"{endpoint}: animals answers {sorted(codes)}, exactly what donations' client handles"
         )
-    parameters = {
-        p["name"] for p in documented.get("parameters", []) if "$ref" not in p
-    }
-    parameters |= {
-        documents["animals"]["components"]["parameters"][p["$ref"].rsplit("/", 1)[-1]][
-            "name"
-        ]
-        for p in documented.get("parameters", [])
-        if "$ref" in p
-    }
-    placeholders = set(re.findall(r"{([a-z_]+)}", client["ANIMAL_PATH"]))
-    if parameters != placeholders:
+    parameters = []
+    for parameter in documented.get("parameters", []):
+        if "$ref" in parameter:
+            parameter = animals["components"]["parameters"][
+                parameter["$ref"].rsplit("/", 1)[-1]
+            ]
+        parameters.append(parameter)
+    in_path = {p["name"] for p in parameters if p["in"] == "path"}
+    placeholders = set(re.findall(r"{([a-z_]+)}", path))
+    if in_path != placeholders:
         problem(
-            f"{endpoint}: animals documents parameters {parameters}, the client fills {placeholders}"
-        )
-    timeout = services["donations"]["env"]["ANIMALS_TIMEOUT_S"]["default"]
-    if calls[0]["timeout_s"] != timeout:
-        problem(
-            f"donations: calls timeout_s {calls[0]['timeout_s']} differs from ANIMALS_TIMEOUT_S default {timeout}"
+            f"{endpoint}: animals documents path parameters {in_path}, the client fills {placeholders}"
         )
 
 
 ENV_READS = [
     re.compile(r'os\.environ\.get\("([A-Z_][A-Z0-9_]*)"'),
-    re.compile(r'_read_(?:optional|timeout)\("([A-Z_][A-Z0-9_]*)"'),
+    re.compile(r'_read_(?:optional|timeout|int)\("([A-Z_][A-Z0-9_]*)"'),
 ]
 SHELL_READS = re.compile(r"\$\{([A-Z_][A-Z0-9_]*)")
 
