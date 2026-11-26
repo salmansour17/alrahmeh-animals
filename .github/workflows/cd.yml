@@ -207,6 +207,9 @@ jobs:
             | "window.ALRAHMEH_CONFIG = {\n  animalsUrl: \"\(.animals)\",\n  donationsUrl: \"\(.donations)\",\n  enquiriesUrl: \"\(.enquiries)\",\n};"' \
             "$RUNNER_TEMP/outputs.json" > dist/config.js
           cat dist/config.js
+          # Completes the Content-Security-Policy with those same addresses,
+          # and fails the deploy if any is not allowed by it (vite.config.js).
+          node scripts/finalize-csp.mjs dist
 
       # Hashed assets (index-BjD3-Kgg.js) never change content, so browsers
       # may keep them for a year. index.html and config.js must be checked
