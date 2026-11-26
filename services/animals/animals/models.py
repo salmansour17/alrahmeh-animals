@@ -349,6 +349,34 @@ def parse_outcome(raw: str | None) -> RequestOutcome | None:
     return _enum({"status": raw}, "status", RequestOutcome)
 
 
+# GET /api/animals/names answers at most this many ids at once: the largest
+# page of the staff donation list (donations service, MAX_PAGE_SIZE) cannot
+# name more distinct animals than it has rows.
+MAX_NAME_IDS = 200
+# The largest BIGINT, the type of every id column.
+_MAX_ID = 2**63 - 1
+
+
+def parse_id_list(raw: str | None) -> tuple[int, ...]:
+    """Parse ?ids=1,3,5 into distinct positive ids, in the order given.
+
+    ASCII digits only, so a minus sign, a decimal point or an Arabic-Indic
+    digit is refused rather than converted. Empty items, an empty list and
+    more than MAX_NAME_IDS distinct ids are refused too: the caller asked for
+    something, and a clear 400 beats a silent guess."""
+    if raw is None or not raw.strip():
+        raise ValidationError("ids must list at least one animal id, e.g. ids=1,3,5")
+    ids: dict[int, None] = {}
+    for item in raw.split(","):
+        item = item.strip()
+        if not item.isascii() or not item.isdigit() or not 1 <= int(item) <= _MAX_ID:
+            raise ValidationError("ids must be positive whole numbers separated by commas, e.g. ids=1,3,5")
+        ids[int(item)] = None
+    if len(ids) > MAX_NAME_IDS:
+        raise ValidationError(f"ids can list at most {MAX_NAME_IDS} different animals")
+    return tuple(ids)
+
+
 def parse_status(raw: str | None) -> PlacementStatus | None:
     """Parse an optional ?status= filter. None means no filter."""
     if raw is None:

@@ -32,6 +32,7 @@ from animals.models import (
     TransitionRequest,
     ValidationError,
     is_honeypot,
+    parse_id_list,
     parse_outcome,
     parse_status,
 )
@@ -163,6 +164,8 @@ class AnimalRepository(Protocol):
 
     def list(self, status: PlacementStatus | None) -> list[Animal]: ...
 
+    def names(self, animal_ids: tuple[int, ...]) -> dict[int, str]: ...
+
     def count_by_status(self) -> dict[PlacementStatus, int]: ...
 
     def add_offline_adoption(self, adoption: NewOfflineAdoption) -> OfflineAdoption: ...
@@ -230,6 +233,13 @@ class AnimalService:
 
     def list_animals(self, status: str | None = None) -> list[Animal]:
         return self._repository.list(parse_status(status))
+
+    def names(self, ids: str | None) -> dict[int, str]:
+        """Names for ?ids=1,3,5, for services that show animals by name (the
+        donations service's staff list). Every animal is public by id already
+        (GET /api/animals/<id>), so this reveals nothing new: it only answers
+        many at once."""
+        return self._repository.names(parse_id_list(ids))
 
     def placement_counts(self) -> dict[PlacementStatus, int]:
         """Animals per status, every status present. The homepage's "found
