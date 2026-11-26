@@ -44,7 +44,8 @@ services:
       SAMPLE_ANIMALS: { default: "1", description: "Add six sample animals at start when there are none; 0 starts empty" }
       FLASK_DEBUG: { default: "0", description: "Flask debug mode for development; never on in a container" }
       GIT_SHA: { default: dev, description: "Git commit of the build, set at image build time and reported by /health" }
-      WEB_WORKERS: { default: 2, description: "Number of gunicorn worker processes in the container" }
+      WEB_WORKERS: { default: 1, description: "Gunicorn worker processes; 1, so in-memory rate limits and caches are shared by every request" }
+      WEB_THREADS: { default: 4, description: "Threads in the gunicorn worker, serving requests side by side" }
     azure:
       container_app: <PREFIX>-animals
       sql_database: <PREFIX>-animals-db
@@ -79,7 +80,8 @@ services:
       BANK_ACCOUNT_NAME: { default: "", description: "Account holder for bank transfers" }
       FLASK_DEBUG: { default: "0", description: "Flask debug mode for development; never on in a container" }
       GIT_SHA: { default: dev, description: "Git commit of the build, set at image build time and reported by /health" }
-      WEB_WORKERS: { default: 2, description: "Number of gunicorn worker processes in the container" }
+      WEB_WORKERS: { default: 1, description: "Gunicorn worker processes; 1, so in-memory rate limits and caches are shared by every request" }
+      WEB_THREADS: { default: 4, description: "Threads in the gunicorn worker, serving requests side by side" }
     calls:
       - service: animals
         url_env: ANIMALS_URL
@@ -114,7 +116,8 @@ services:
       CORS_ORIGINS: { default: "", description: "Website origins allowed to call from a browser, comma separated; empty allows none" }
       FLASK_DEBUG: { default: "0", description: "Flask debug mode for development; never on in a container" }
       GIT_SHA: { default: dev, description: "Git commit of the build, set at image build time and reported by /health" }
-      WEB_WORKERS: { default: 2, description: "Number of gunicorn worker processes in the container" }
+      WEB_WORKERS: { default: 1, description: "Gunicorn worker processes; 1, so in-memory rate limits and caches are shared by every request" }
+      WEB_THREADS: { default: 4, description: "Threads in the gunicorn worker, serving requests side by side" }
     azure:
       container_app: <PREFIX>-enquiries
       sql_database: <PREFIX>-enquiries-db

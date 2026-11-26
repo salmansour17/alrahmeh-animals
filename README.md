@@ -122,15 +122,16 @@ staff donation earmarked for an animal is refused, with a 503 asking to retry
 ## Configuration
 
 Every setting is read from the environment at startup. No `.env` file is
-required. `PORT`, `DATABASE_URL`, `CORS_ORIGINS`, `FLASK_DEBUG`, `WEB_WORKERS`
-and `ADMIN_PASSWORD` are read by every service; the rest by the one named.
+required. `PORT`, `DATABASE_URL`, `CORS_ORIGINS`, `FLASK_DEBUG`, `WEB_WORKERS`,
+`WEB_THREADS` and `ADMIN_PASSWORD` are read by every service; the rest by the one named.
 
 | Variable | Default | Purpose |
 |---|---|---|
 | `PORT` | `8000` | TCP port to listen on. Values that are not valid port numbers are ignored with a warning. |
 | `DATABASE_URL` | _(none; required)_ | The service's own database: `mssql://USER:PASSWORD@HOST:PORT/DATABASE`, with `?encrypt=true` on Azure. A secret, so it has no default; a service will not start without it. |
 | `CORS_ORIGINS` | _(none)_ | Website origins allowed to call the service from a browser, comma separated, e.g. `http://localhost:8080`. No wildcard; unset allows none. |
-| `WEB_WORKERS` | `2` | gunicorn worker processes in the container. |
+| `WEB_WORKERS` | `1` | gunicorn worker processes in the container. One, so the in-memory rate limits and name cache are shared by every request. |
+| `WEB_THREADS` | `4` | Threads in that worker, serving requests side by side. |
 | `SAMPLE_ANIMALS` | `1` | _(animals)_ When the database has no animals, add six sample animals at startup (via the same service as a staff intake) so the animal pages have something to show. `0` starts empty. Never adds to a database that already has animals. |
 | `FLASK_DEBUG` | `0` | Set to `1` for the Flask reloader and tracebacks in development. |
 | `ADMIN_PASSWORD` | _(unset)_ | Shared password for the staff-only endpoints. **Unset disables them**, returning 503 rather than allowing access. |
