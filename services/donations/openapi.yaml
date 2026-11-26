@@ -57,6 +57,7 @@ paths:
     get:
       tags: [donations]
       summary: Totals for the homepage, computed from the ledger
+      description: Gifts minus reversals. A reversed gift counts for nothing, and a reversal is never counted as a gift.
       responses:
         "200":
           description: The figures
@@ -67,8 +68,8 @@ paths:
                 required: [total_raised, donation_count, animals_helped, by_purpose]
                 properties:
                   total_raised: {$ref: "#/components/schemas/Money"}
-                  donation_count: {type: integer}
-                  animals_helped: {type: integer, description: "Distinct animals with an earmarked gift"}
+                  donation_count: {type: integer, description: "Gifts that have not been reversed"}
+                  animals_helped: {type: integer, description: "Distinct animals with an earmarked gift that has not been reversed"}
                   by_purpose:
                     type: object
                     required: [medical_fund, food_fund, general]
@@ -262,6 +263,56 @@ paths:
               schema: {$ref: "#/components/schemas/Error"}
         "503": {$ref: "#/components/responses/StaffDisabled"}
 
+  /api/donations/{donation_id}/reversal:
+    post:
+      tags: [staff]
+      summary: Cancel a gift recorded by mistake, by adding a reversal row
+      description: >
+        The ledger is append-only, so a mistake is never edited: this adds a
+        new row of kind "reversal" that cancels the gift in full, and the
+        impact figures subtract it. Amount, currency, purpose and earmark are
+        copied from the gift by the database, never taken from the request.
+        A gift can be reversed once; a reversal cannot be reversed. This is a
+        ledger entry only: it does not refund a card payment at the payment
+        provider.
+      security: [{staff: []}]
+      parameters:
+        - name: donation_id
+          in: path
+          required: true
+          schema: {type: integer, minimum: 1}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reason]
+              additionalProperties: false
+              properties:
+                reason: {type: string, minLength: 1, maxLength: 500, description: "Why it is reversed; trimmed, any language"}
+      responses:
+        "201":
+          description: The new reversal row
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Donation"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "401": {$ref: "#/components/responses/Unauthorised"}
+        "404":
+          description: No such donation
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "409":
+          description: >
+            already_reversed (the gift has a reversal already) or
+            not_reversible (the target is itself a reversal)
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "503": {$ref: "#/components/responses/StaffDisabled"}
+
 components:
   securitySchemes:
     staff:
@@ -298,15 +349,35 @@ components:
         amount_jod: {type: string, example: "25.500"}
     Donation:
       type: object
-      required: [id, donor_name, amount_fils, amount_jod, purpose, earmarked_animal_id, received_on]
+      description: >
+        One ledger row: a gift, or a reversal that cancels one. Amounts are
+        positive on both kinds; the impact figures subtract reversals.
+      required:
+        - id
+        - donor_name
+        - amount_fils
+        - amount_jod
+        - purpose
+        - earmarked_animal_id
+        - received_on
+        - kind
+        - reverses_donation_id
+        - reversal_reason
+        - reversed_by_id
+        - reversible
       properties:
         id: {type: integer}
-        donor_name: {type: string, nullable: true}
+        donor_name: {type: string, nullable: true, description: "Null on a reversal: see the gift it reverses"}
         amount_fils: {type: integer}
         amount_jod: {type: string}
         purpose: {$ref: "#/components/schemas/Purpose"}
         earmarked_animal_id: {type: integer, nullable: true}
-        received_on: {type: string, format: date}
+        received_on: {type: string, format: date, description: "For a reversal, the day it was recorded"}
+        kind: {type: string, enum: [gift, reversal]}
+        reverses_donation_id: {type: integer, nullable: true, description: "On a reversal, the gift it cancels"}
+        reversal_reason: {type: string, nullable: true, description: "On a reversal, why staff reversed the gift"}
+        reversed_by_id: {type: integer, nullable: true, description: "On a reversed gift, the reversal that cancels it"}
+        reversible: {type: boolean, description: "True only for a gift that has not been reversed"}
 
   responses:
     BadRequest:

@@ -52,7 +52,9 @@ services:
   donations:
     description: >
       The append-only donation ledger, card payments through Stripe (test
-      mode) and the impact figures. Calls the animals service to check
+      mode) and the impact figures. A mistaken gift is corrected by a
+      reversal row that cancels it (migration 003), never by an edit; the
+      figures subtract reversals. Calls the animals service to check
       earmarked animals.
     path: services/donations
     openapi: services/donations/openapi.yaml
@@ -86,7 +88,8 @@ services:
           them to try again in a minute, and nothing is recorded. A donor's
           card checkout goes ahead with the earmark unverified, and the
           payment webhook records the gift and logs it for staff. Donations
-          without an earmark and the impact figures never call animals.
+          without an earmark, reversals and the impact figures never call
+          animals.
     azure:
       container_app: <PREFIX>-donations
       sql_database: <PREFIX>-donations-db

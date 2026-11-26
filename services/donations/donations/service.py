@@ -26,6 +26,8 @@ from donations.models import (
     PageRequest,
     PaymentConfirmed,
     ProviderCharge,
+    ReversalOutcome,
+    ReversalRequest,
     ValidationError,
 )
 
@@ -35,6 +37,21 @@ logger = logging.getLogger(__name__)
 class DonationNotFound(LookupError):
     def __init__(self, donation_id: int) -> None:
         super().__init__(f"no donation with id {donation_id}")
+
+
+class AlreadyReversed(RuntimeError):
+    """The gift has a reversal already. A gift can be reversed once."""
+
+    def __init__(self, donation_id: int) -> None:
+        super().__init__(f"donation {donation_id} has already been reversed")
+
+
+class NotReversible(RuntimeError):
+    """The target is itself a reversal. A reversal cannot be reversed: to undo
+    a mistaken reversal, staff record the gift again."""
+
+    def __init__(self, donation_id: int) -> None:
+        super().__init__(f"donation {donation_id} is a reversal and cannot itself be reversed")
 
 
 class UnknownEarmarkedAnimal(ValidationError):
@@ -102,6 +119,8 @@ class DonationRepository(Protocol):
 
     def add_paid(self, donation: NewDonation, charge: ProviderCharge) -> Donation | None: ...
 
+    def reverse(self, donation_id: int, reason: str, recorded_on: date) -> tuple[ReversalOutcome, Donation | None]: ...
+
     def impact(self) -> ImpactSummary: ...
 
 
@@ -131,6 +150,25 @@ class DonationService:
         # so an unchecked typo here could never be taken back (ADR-6).
         self._check_earmark(donation.earmarked_animal_id)
         return self._repository.add(donation)
+
+    def reverse(self, donation_id: int, payload: Any) -> Donation:
+        """Cancel a gift recorded by mistake, by adding a reversal row.
+
+        The ledger is never edited: the reversal is a new row that the impact
+        figures subtract. It is a ledger entry only; for a card donation it
+        does not refund anything at the payment provider, which staff do in
+        the provider's own dashboard.
+        """
+        request = ReversalRequest.from_payload(payload)
+        outcome, reversal = self._repository.reverse(donation_id, request.reason, self._today())
+        if outcome is ReversalOutcome.NOT_FOUND:
+            raise DonationNotFound(donation_id)
+        if outcome is ReversalOutcome.NOT_A_GIFT:
+            raise NotReversible(donation_id)
+        if outcome is ReversalOutcome.ALREADY_REVERSED:
+            raise AlreadyReversed(donation_id)
+        assert reversal is not None  # REVERSED always comes with the new row
+        return reversal
 
     def start_checkout(self, payload: Any) -> CheckoutSession:
         """Ask the provider for a payment page. Writes nothing to the ledger:

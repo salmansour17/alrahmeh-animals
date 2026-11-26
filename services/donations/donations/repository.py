@@ -3,7 +3,8 @@
 The only module in the donations package that contains SQL, all of it with %s
 placeholders. There is deliberately no update or delete method: the ledger is
 append-only, and the class's shape says so. The trigger in 001_init.sql backs
-that up for anything that bypasses this class.
+that up for anything that bypasses this class. A correction is a new row, a
+reversal (003_ledger_reversals.sql), written by reverse().
 """
 
 from __future__ import annotations
@@ -14,15 +15,37 @@ from typing import Any
 from db import Database, IntegrityError
 from donations.models import (
     Donation,
+    DonationKind,
     DonationPurpose,
     ImpactSummary,
+    LedgerSum,
     NewDonation,
     PageRequest,
     ProviderCharge,
+    ReversalOutcome,
+    net_impact,
+)
+
+# SQL Server error numbers, checked against a real server (2026-11-26):
+# 2627 a UNIQUE constraint, 2601 a unique index. The ledger's "reversed only
+# once" rule is the filtered unique index ux_donations_reversed_once.
+_DUPLICATE_KEY = (2627, 2601)
+
+# Every read of a ledger row goes through this, so every row comes back with
+# the id of the reversal that cancels it (if any), found by a self-join: the
+# gift itself is never edited to say so.
+_SELECT_DONATIONS = (
+    "SELECT d.id, d.donor_name, d.amount_fils, d.purpose, d.earmarked_animal_id, d.received_at, "
+    "d.kind, d.reverses_donation_id, d.reversal_reason, r.id AS reversed_by_id "
+    "FROM donations AS d LEFT JOIN donations AS r ON r.reverses_donation_id = d.id"
 )
 
 
 class _AlreadyRecorded(Exception):
+    """Raised inside a transaction to roll it back; never leaves this module."""
+
+
+class _AlreadyReversed(Exception):
     """Raised inside a transaction to roll it back; never leaves this module."""
 
 
@@ -66,7 +89,7 @@ class SqlDonationRepository:
                 except IntegrityError as error:
                     # 2627/2601: the UNIQUE session_id is already there. Undo
                     # the donation insert above: unit_of_work rolls back.
-                    if error.args and error.args[0] in (2627, 2601):
+                    if _is_duplicate(error):
                         raise _AlreadyRecorded from error
                     raise
         except _AlreadyRecorded:
@@ -75,50 +98,89 @@ class SqlDonationRepository:
 
     def get(self, donation_id: int) -> Donation | None:
         with self._database.unit_of_work() as connection:
-            row = connection.execute(
-                "SELECT id, donor_name, amount_fils, purpose, earmarked_animal_id, received_at "
-                "FROM donations WHERE id = %s",
-                (donation_id,),
-            ).fetchone()
-        return _to_donation(row) if row else None
+            return _get(connection, donation_id)
 
     def list(self, page: PageRequest) -> list[Donation]:
         with self._database.unit_of_work() as connection:
             rows = connection.execute(
-                "SELECT id, donor_name, amount_fils, purpose, earmarked_animal_id, received_at "
-                "FROM donations ORDER BY received_at DESC, id DESC "
-                "OFFSET %s ROWS FETCH NEXT %s ROWS ONLY",
+                _SELECT_DONATIONS + " ORDER BY d.received_at DESC, d.id DESC OFFSET %s ROWS FETCH NEXT %s ROWS ONLY",
                 (page.offset, page.limit),
             ).fetchall()
         return [_to_donation(row) for row in rows]
 
+    def reverse(self, donation_id: int, reason: str, recorded_on: date) -> tuple[ReversalOutcome, Donation | None]:
+        """Add a reversal that cancels gift donation_id, in one transaction.
+
+        The new row is built by the database from the gift itself (INSERT ...
+        SELECT): amount, currency, purpose and earmark are copied, never taken
+        from a request. The donor's name is not copied: the reversal links to
+        the gift, which already holds it.
+
+        The filtered unique index decides "reversed only once", not a SELECT
+        beforehand: two staff clicking at the same moment both get past any
+        SELECT, but only one INSERT can win; the other gets ALREADY_REVERSED.
+        """
+        try:
+            with self._database.unit_of_work() as connection:
+                try:
+                    row = connection.execute(
+                        "INSERT INTO donations "
+                        "(donor_name, amount_fils, currency, purpose, earmarked_animal_id, received_at, "
+                        "kind, reverses_donation_id, reversal_reason) "
+                        "OUTPUT INSERTED.id "
+                        "SELECT NULL, amount_fils, currency, purpose, earmarked_animal_id, %s, %s, id, %s "
+                        "FROM donations WHERE id = %s AND kind = %s",
+                        (
+                            recorded_on.isoformat(),
+                            DonationKind.REVERSAL.value,
+                            reason,
+                            donation_id,
+                            DonationKind.GIFT.value,
+                        ),
+                    ).fetchone()
+                except IntegrityError as error:
+                    if _is_duplicate(error):
+                        raise _AlreadyReversed from error
+                    raise
+                if row is None:
+                    # Nothing was inserted: the id is unknown, or not a gift.
+                    target = _get(connection, donation_id)
+                    outcome = ReversalOutcome.NOT_FOUND if target is None else ReversalOutcome.NOT_A_GIFT
+                    return outcome, None
+                return ReversalOutcome.REVERSED, _get(connection, row["id"])
+        except _AlreadyReversed:
+            return ReversalOutcome.ALREADY_REVERSED, None
+
     def impact(self) -> ImpactSummary:
-        """All homepage figures, computed by the database from the ledger as it
-        is now.
+        """All homepage figures, computed from the ledger as it is now: gifts
+        minus reversals (models.net_impact applies the sign).
 
         The two SELECTs run in one SERIALIZABLE transaction so they read the
-        same rows. Without it, a donation committed between them would make
-        the headline total disagree with the per-purpose totals.
+        same rows. Without it, a donation or a reversal committed between them
+        would make the totals disagree with the count of animals helped.
         """
         with self._database.unit_of_work() as connection:
             connection.execute("SET TRANSACTION ISOLATION LEVEL SERIALIZABLE")
-            headline = connection.execute(
-                "SELECT COALESCE(SUM(amount_fils), 0) AS total_fils, "
-                "COUNT(*) AS donation_count, "
-                "COUNT(DISTINCT earmarked_animal_id) AS animals_helped "
-                "FROM donations"
-            ).fetchone()
-            by_purpose = connection.execute(
-                "SELECT purpose, COALESCE(SUM(amount_fils), 0) AS total_fils FROM donations GROUP BY purpose"
+            sums = connection.execute(
+                "SELECT purpose, kind, SUM(amount_fils) AS total_fils, COUNT(*) AS row_count "
+                "FROM donations GROUP BY purpose, kind"
             ).fetchall()
-        found = {DonationPurpose(row["purpose"]): row["total_fils"] for row in by_purpose}
-        return ImpactSummary(
-            total_raised_fils=headline["total_fils"],
-            donation_count=headline["donation_count"],
-            # Iterating the enum, not the rows, is what makes a purpose with no
-            # donations yet appear as 0 instead of being missing.
-            totals_by_purpose_fils={purpose: found.get(purpose, 0) for purpose in DonationPurpose},
-            animals_helped=headline["animals_helped"],
+            # An animal is helped by a gift that still stands: its reversal,
+            # if any, takes it out of the count.
+            helped = connection.execute(
+                "SELECT COUNT(DISTINCT g.earmarked_animal_id) AS animals_helped FROM donations AS g "
+                "WHERE g.kind = %s AND NOT EXISTS "
+                "(SELECT 1 FROM donations AS r WHERE r.reverses_donation_id = g.id)",
+                (DonationKind.GIFT.value,),
+            ).fetchone()
+        return net_impact(
+            (
+                LedgerSum(
+                    DonationPurpose(row["purpose"]), DonationKind(row["kind"]), row["total_fils"], row["row_count"]
+                )
+                for row in sums
+            ),
+            helped["animals_helped"],
         )
 
 
@@ -140,6 +202,15 @@ def _insert_donation(connection: Any, donation: NewDonation) -> int:
     return cursor.fetchone()["id"]
 
 
+def _get(connection: Any, donation_id: int) -> Donation | None:
+    row = connection.execute(_SELECT_DONATIONS + " WHERE d.id = %s", (donation_id,)).fetchone()
+    return _to_donation(row) if row else None
+
+
+def _is_duplicate(error: IntegrityError) -> bool:
+    return bool(error.args) and error.args[0] in _DUPLICATE_KEY
+
+
 def _to_donation(row: Any) -> Donation:
     return Donation(
         id=row["id"],
@@ -148,6 +219,10 @@ def _to_donation(row: Any) -> Donation:
         purpose=DonationPurpose(row["purpose"]),
         earmarked_animal_id=row["earmarked_animal_id"],
         received_on=_as_date(row["received_at"]),
+        kind=DonationKind(row["kind"]),
+        reverses_donation_id=row["reverses_donation_id"],
+        reversal_reason=row["reversal_reason"],
+        reversed_by_id=row["reversed_by_id"],
     )
 
 
