@@ -55,7 +55,26 @@ the same number below the table.
 | 2026-11-19 / `feat/terraform-cd` `.github/workflows/terraform.yml` | Claude Code (Opus 5.5) | Step 7 of the day's prompt | Accepted | `terraform fmt -check -diff`, then `terraform init -backend=false`, then `terraform validate`, with Terraform 1.13.4, on every push and pull request; cd.yml calls it too. Needs no credentials. Locally, both checks were run in the `hashicorp/terraform:1.13.4` image and passed. | ⚠️ TODO (me): why does `terraform init -backend=false` let this job run without any Azure credentials, and what does it skip? |
 | 2026-11-19 / `feat/terraform-cd` `.github/workflows/cd.yml` | Claude Code (Opus 5.5) | Step 8 of the day's prompt ([the prompt for 2026-11-19](#prompt-for-2026-11-19-verbatim)) | Accepted | Runs only on pushes to main, one deploy at a time (`concurrency`, never cancelled halfway), `permissions: {}` with each job asking for its own. CI, Contracts and Terraform run first; images are pushed to GHCR tagged with the commit SHA (`provenance: false`, `GIT_SHA` build argument); then one deploy job signs in with OIDC, runs `terraform apply`, creates any missing database on the free offer with `az`, builds the website with a `config.js` from Terraform's outputs, uploads it to `$web` (assets cached a year, `index.html` and `config.js` no-cache), and polls `/health` on every service for up to five minutes. Every secret and variable it needs is listed at the top and in `docs/deployment.md`. Not run: nothing touches Azure until the bootstrap exists. I caught one thing in review: a quoting fix had turned `'$web'` into `"$web"`, which the shell would read as an empty variable; it is now `"\$web"`. | ⚠️ TODO (me): the images job has `needs: [ci, contracts, terraform-check]`. What happens to a push to main whose tests fail, and which line makes that true? |
 | 2026-11-19 / `feat/ci`, `feat/health-and-contract`, `feat/terraform-cd` | Claude Code (Opus 5.5) | The day's prompt: CI, then health and contract, then Terraform and CD, nothing against Azure. Full prompt: [the prompt for 2026-11-19](#prompt-for-2026-11-19-verbatim). | Modified | Three stacked branches, eight commits, kept separate with a snapshot of the changed files at each commit point. Deviations it told me about: the contract checks became their own workflow, `terraform.yml` was added so CI checks Terraform, and the provider block exists because azurerm requires one. Found and fixed while verifying, not asked for: `/health` took 14.8 s with the database stopped (Docker's name lookup for a stopped container), now about 4.6 s with a 5-second deadline and a 3-second login timeout; and `ARG GIT_SHA` moved below the dependency install so a new commit does not reinstall every package. The animals call's deadline fix took the real Docker case from 3.9 s to 2.01 s. Tests on SQL Server: animals 255, donations 250, enquiries 90, 100% each; ruff, actionlint, `terraform fmt`/`validate` and the contract checks all pass. Not run: anything against Azure. | ⚠️ TODO (me): the deadline fix in `animals_client.py` runs the request in a worker thread and waits with `future.result(timeout=...)`. What was the bug with `urlopen(timeout=2)` alone, and what happens to the worker thread when the deadline passes? |
-
+| 2026-11-25 / `feat/devsecops-pipeline`, `feat/hand-written-scanners` | Claude Code (Opus 5.5) | The day's prompt: Part B (DevSecOps pipeline, items 5 to 8) and Part C (hand-written scanners, items 9 to 11). Full prompt: [the prompt for 2026-11-25](#prompt-for-2026-11-25-verbatim). | Modified | Nine commits on two branches, kept apart with file snapshots. Changes it made beyond the brief, each explained: the Trivy scan found fixable HIGH/CRITICAL in every image, so the base moved to `python:3.13.18-slim-bookworm`, pip is uninstalled in the final image and Pillow went to 13.0.0 (now 0 fixable); our own SCA found a HIGH in vite 8.3.2, fixed by 8.3.3 in its own commit; both Rego files got a guard rule after the first version silently passed because Conftest's input shape was not what it assumed; the two install steps became one checksum-checking script. Rule choices to double-check: SAST adds `outerHTML`, `insertAdjacentHTML`, `os.popen` and `subprocess.getoutput`, flags `usedforsecurity=False`, reports unused ignores, and CI excludes `tests/` (36 true positives, all fixtures). SCA fails on UNKNOWN severity and does not compute CVSS v4. zizmor still warns about the existing secrets in `cd.yml` not being in a GitHub Environment, which would need a new Azure federated credential, so it was left for me to decide. Verified: every rule and policy proven to fail on a broken copy of a real file, actionlint clean, every `uses:` on a 40-character SHA and every `FROM` on a digest, all tests at 100% coverage (animals 255, donations 250, enquiries 90, scanners 231). | ⚠️ TODO (me): `sca.py` reports a vulnerability with no rating as UNKNOWN and fails the run. What would go wrong if it passed instead, and why can a PYSEC entry have no rating while its GHSA alias has one? |
+| 2026-11-25 / `feat/devsecops-pipeline` `.github/workflows/ci.yml`, `contracts.yml`, `terraform.yml`, `cd.yml` | Claude Code (Opus 5.5) | Item 5 of the day's prompt | Accepted | Every third-party action pinned to a full commit SHA with its version in a comment, `persist-credentials: false` on every checkout, a concurrency group per workflow that cancels superseded pull-request runs, the SQL Server test image pinned by digest, and `cd.yml`'s `$web` and resource names moved into `env`. | ⚠️ TODO (me): `actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0`. Why the SHA and not `@v4`, and what does the `# v4.4.0` comment do that the SHA alone cannot? |
+| 2026-11-25 / `feat/devsecops-pipeline` `.github/dependabot.yml` | Claude Code (Opus 5.5) | Item 6 of the day's prompt | Accepted | Weekly update checks on Mondays for pip (one entry per service), npm (`ui`), GitHub Actions and the three Dockerfiles; minor and patch updates grouped into one pull request per ecosystem, major updates on their own. Validated against the published schema. | ⚠️ TODO (me): `applies-to: version-updates` in the groups. What would Dependabot do with a security update if the group applied to those too, and why keep them separate? |
+| 2026-11-25 / `feat/devsecops-pipeline` `.pre-commit-config.yaml` | Claude Code (Opus 5.5) | Item 7 of the day's prompt | Accepted | ruff (lint with `--fix`, then format) on `services/`, `contracts/` and `security/`, and gitleaks on what is being committed, both pinned to commit SHAs. The README explains how to install the hooks. The first `ruff format` run reformatted 29 files, committed on its own so the real changes stay readable; CI now checks the format. | ⚠️ TODO (me): `rev: 488940d9de1b658fac229e34c521d75a6ea476f2 # frozen: v0.14.5`. What does "frozen" mean here, and why does the same ruff version also appear in each service's `requirements.txt`? |
+| 2026-11-25 / `feat/devsecops-pipeline` `services/*/Dockerfile`, `services/animals/requirements.txt` | Claude Code (Opus 5.5) | Item 8 of the day's prompt (found by its Trivy scan) | Accepted | Base image `python:3.13.18-slim-bookworm` by multi-platform digest; `pip install ... && pip uninstall --yes pip` in one `RUN`; Pillow 13.0.0. Rescanned: 0 fixable HIGH/CRITICAL in all three images (46 unfixed remain, no Debian fix exists), and the animals tests pass on the new Pillow. | ⚠️ TODO (me): why is `pip uninstall --yes pip` in the same `RUN` as the install, and not a `RUN` line of its own? |
+| 2026-11-25 / `feat/devsecops-pipeline` `policy/dockerfile/*.rego`, `policy/terraform/*.rego` | Claude Code (Opus 5.5) | Item 8 of the day's prompt | Accepted | Our own Conftest rules. Dockerfiles: the last `USER` is not root, and every `FROM` has a tag that is not `latest` and an `@sha256` digest. Terraform: min 0 and max 1 replicas, insecure ingress explicitly off, startup and readiness probes on `/health`, secret-holding variables only through `secret_name`, TLS 1.2 on SQL, and no firewall rule but Azure services. 24 Rego tests; each rule shown failing on a broken copy of the real file. | ⚠️ TODO (me): `terraform.rego` denies when `count(container_apps) == 0`. What bug does that guard catch, given that it was the first thing that went wrong when these rules were written? |
+| 2026-11-25 / `feat/devsecops-pipeline` `.github/workflows/security.yml`, `.github/scripts/install-release-binary.sh`, `.gitleaksignore` | Claude Code (Opus 5.5) | Item 8 of the day's prompt | Accepted | Four jobs on every push, pull request and Monday 03:23 UTC, and before every deploy: Trivy on each built image (fails on fixable HIGH/CRITICAL; full report to the Security tab), Trivy on the configuration, gitleaks over the whole history, and Conftest (tests the rules, then applies them). gitleaks and conftest are installed by one script that checks each archive's SHA-256 before running it. The four old gitleaks findings, checked by hand, are listed by fingerprint with reasons. | ⚠️ TODO (me): `ignore-unfixed: true` on the gating Trivy step. What does it leave out, why is failing on those not useful, and where do they still show up? |
+| 2026-11-25 / `feat/hand-written-scanners` `security/sast.py` | Claude Code (Opus 5.5) | Item 9 of the day's prompt | Modified | Eight Python rules on a single `ast` walk with a rule registry, three JavaScript rules on code with comments and strings blanked out, import aliases resolved, `# sast: ignore[rule] reason` with a mandatory reason, parse failures reported, exit codes 0/1/2. Rules beyond the brief: listed in the session row above. | ⚠️ TODO (me): `sql = f"... {x}"` on one line and `cursor.execute(sql)` on the next is caught, but `cursor.execute(sql, params)` inside `db.py` is not. How does the scanner tell them apart? |
+| 2026-11-25 / `feat/hand-written-scanners` `security/sca.py`, `ui/package.json` | Claude Code (Opus 5.5) | Item 10 of the day's prompt | Accepted | Checks `==` pins and the lock file, then asks OSV's batch API about every installed Python package and every npm package in the lock file, in chunks of 1000 with pagination, retries and timeouts, and works out severity from the advisory, the CVSS v3 vector or an alias. OSV unreachable is exit 2, never a pass. Its first run found vite 8.3.2 HIGH (GHSA-587h-7wmj-h5pm), fixed by 8.3.3. | ⚠️ TODO (me): the CVSS vector `AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H` scores 9.8. Which of those letters make it so high, and what would `AV:P` change? |
+| 2026-11-25 / `feat/hand-written-scanners` `.github/workflows/scanners.yml` | Claude Code (Opus 5.5) | Item 11 of the day's prompt | Accepted | Tests and lints the scanners first; then SAST on the services and the website, and SCA per service and for the website (`fail-fast: false`). Each Python SCA runs in a fresh virtual environment with no pip, holding only that service's requirements. `cd.yml` deploys only if it passes. The DAST job's place is marked for Friday. | ⚠️ TODO (me): `python -m venv --without-pip "$RUNNER_TEMP/venv"` and then `pip --python ... install`. Why build the environment this way instead of installing into the runner's own Python? |
+| 2026-11-26 / `feat/one-connection-per-request` `services/*/db.py`, `services/*/app.py` | Claude Code (Opus 5.5) | "One connection per request" (my choice between two fixes it proposed, after earmarked donations kept failing on the live site with "Could not check the earmarked animal right now") | Accepted | It read both services' logs on Azure: every lookup of one animal took about 3.4 s against the earmark check's 2-second deadline, because `GET /api/animals/<id>` runs four units of work and each opened its own TLS login from Germany to the database in Spain. Now each request opens at most one connection, shared by its units of work (each still its own transaction) and closed when the request ends; the health check keeps its own, a broken connection is replaced, nested units stay independent. 14 tests per service, including a real-request login count. Measured on Azure after the deploy: 3.43 s became 1.13 s server-side (`docs/evidence/2026-11-26-one-connection-per-request/`). | ⚠️ TODO (me): `db.py` keeps the shared connection in a `ContextVar`, not a plain attribute on `Database`. What would go wrong with a plain attribute when two requests are served at the same time? |
+| 2026-11-26 / `feat/ledger-reversal` | Claude Code (Opus 5.5) | The day's prompt, Task 1: ledger corrections with migration 003, after I revised it with Claude's corrections (SQL Server, not Postgres; it does not commit; no in-memory repository; two gunicorn workers; CSP origins only known at deploy time). Full prompt: [the prompt for 2026-11-26](#prompt-for-2026-11-26-verbatim). | Modified | Migration 003, the staff-only `POST /api/donations/<id>/reversal`, net impact figures, the portal's Reverse step and the deploy's log step, as briefed. Things to double-check: the reason needed a third new column (`reversal_reason`) and "no reversal of a reversal" a fourth, the computed `reverses_kind`; a reversal copies amount, currency, purpose and earmark in one `INSERT ... SELECT` but not the donor's name; both conflicts answer 409 because the project has no 422. Found and fixed while running it locally: yesterday's connection helper had been placed below `app.py`'s `__main__` block, so `python app.py` crashed (gunicorn and the tests never noticed; a test now guards it), and the docs' `http://localhost:8001` example makes earmark checks fail on Windows (IPv6 first, about 2 s). Verified: every database rule refused on the real server (2601, 547, 51000, 271), the reversal done in the browser with an Arabic reason, tests at 100% (animals 270, donations 307, enquiries 105). | ⚠️ TODO (me): why does `003` add `kind` as `NOT NULL ... DEFAULT N'gift'` instead of adding it nullable and filling it with an `UPDATE`? What would the trigger from `001` have done? |
+| 2026-11-26 / `feat/ledger-reversal` `services/donations/migrations/003_ledger_reversals.sql` | Claude Code (Opus 5.5) | Task 1a of the day's prompt | Accepted | Adds `kind`, `reverses_donation_id`, `reversal_reason` and the computed `reverses_kind` to `donations`, then, in later `GO` batches, the kind and row-shape CHECKs, `UNIQUE (id, kind)`, the foreign key on `(reverses_donation_id, reverses_kind)` and the filtered unique index. No `UPDATE`, and the append-only trigger untouched. Tried against a ledger already holding gifts before any test was written. | ⚠️ TODO (me): `CREATE UNIQUE INDEX ux_donations_reversed_once ... WHERE reverses_donation_id IS NOT NULL`. Why the `WHERE`, and what would a plain `UNIQUE (reverses_donation_id)` constraint have refused? |
+| 2026-11-26 / `feat/ledger-reversal` `.github/workflows/cd.yml`, `.github/scripts/show-startup-logs.sh` | Claude Code (Opus 5.5) | Task 1e of the day's prompt | Accepted | A last deploy step that wakes each app, reads its console log with `az containerapp logs show --type console` (which works without Log Analytics) and prints the migration lines, so they stay in the Actions log after the apps scale to zero. It always exits 0 and warns when the line is missing. Tested with a stand-in `az` for a log with the line, without it, and `az` failing; actionlint and shellcheck clean. Not yet run on GitHub. | ⚠️ TODO (me): the step has `if: always()`. Why can it run after a failed step without turning that failed deploy green? |
+| 2026-11-26 / `feat/cross-seam-names` | Claude Code (Opus 5.5) | The day's prompt, Task 2: batched animal names with a cache. Full prompt: [the prompt for 2026-11-26](#prompt-for-2026-11-26-verbatim). | Modified | The animals service answers `GET /api/animals/names?ids=1,3,5` in one query (the ids travel as one JSON parameter through `OPENJSON`, never pasted into SQL; at most 200 distinct ids, the largest staff page). The donations service asks once per page through a new `HttpAnimalNames`, wrapped in `CachedAnimalNames` (a Proxy: TTL, lock, size limit, failures never cached), while the earmark check keeps its own uncached `HttpAnimalDirectory`, so the cache cannot reach it. Choices to double-check: the list says `animal_names: "unavailable"` so the portal can show `#1 (name unavailable)` and a plain `#1` for an unknown id; the two new settings fall back to their defaults with a warning, as `PORT` does, rather than stopping the start; the cross-seam test uses the existing stand-in animals service over real HTTP, because CI does not run compose; the contract check now covers both calls. Found while verifying: one of its own new tests was flaky (two timeouts racing); fixed to check the elapsed time instead. Checked in the browser with the animals service running and stopped. Tests at 100% (animals 286, donations 347). | ⚠️ TODO (me): `CachedAnimalNames` calls the animals service outside its lock (`fetched = self._source.names(missing)`). What would happen to other staff requests if that call were made while holding the lock and the animals service were slow? |
+| 2026-11-26 / `feat/cross-seam-names` `system.yaml`, `services/donations/config.py` | Claude Code (Opus 5.5) | Task 2b of the day's prompt | Accepted | Two new settings, `ANIMAL_NAMES_TTL_S` (default 300) and `ANIMAL_NAMES_CACHE_SIZE` (default 1000), listed with their defaults; the donations call to animals now lists both endpoints, and `on_failure` says what the list does when the names cannot be fetched. The contract check reads `_read_int(...)` too, so a setting the code reads but `system.yaml` does not list still fails CI. | ⚠️ TODO (me): `ANIMAL_NAMES_TTL_S: { default: 300 ... }`. If an animal is renamed, how long can the staff list show the old name, and why is that acceptable here but not for the earmark check? |
+| 2026-11-26 / `feat/api-hardening` | Claude Code (Opus 5.5) | The day's prompt, Task 3: API hardening. Full prompt: [the prompt for 2026-11-26](#prompt-for-2026-11-26-verbatim). | Modified | Two new modules, identical in every service: `hardening.py` (a sliding-window rate limiter with an injected clock, a lock and a cap on tracked clients; the client's address taken from the right of `X-Forwarded-For`; security headers on every response; `no-store` on every staff answer, 401 and 429 included) and `security_events.py` (security events as JSON lines from a whitelist of fields, never an IP). The public forms allow 5 a minute; wrong staff passwords 5 per 15 minutes per service, checked before the password; health and the Stripe webhook are never limited. The website gets a CSP meta tag in the production build, completed from `config.js` at deploy time. Decisions to double-check: the numbers; 1 trusted proxy hop (not verifiable without the live ingress); a nonsense setting stops the start. Found while verifying: the events logger first shared the name `security` with `security.py`'s own logger, and the new modules were missing from the Dockerfiles, so the container could not start although every test passed; a test now checks every module is copied into its image. A drift test guards all 8 shared files. Also found and not fixed: the built CSS points the Nunito font at `node_modules/`, so it has never loaded in production. Tests at 100% (animals 337, donations 412, enquiries 156); image built and run. | ⚠️ TODO (me): `client_address` takes the address from the right of `X-Forwarded-For`, never the left. Why can a client choose the leftmost value but not the rightmost one behind the Container Apps ingress? |
+| 2026-11-26 / `feat/api-hardening` `services/*/entrypoint.sh`, `services/*/Dockerfile` | Claude Code (Opus 5.5) | Task 3a of the day's prompt | Modified | gunicorn now starts one worker process with four threads (`WEB_WORKERS=1`, `WEB_THREADS=4`), so the in-memory limits and the name cache are shared by every request; the log shows `Using worker: gthread`. Each Dockerfile's `COPY` line gained `hardening.py` and `security_events.py` after the first image built from this branch failed to start without them. Base image digest, non-root `USER` and the Conftest policies unchanged and passing. | ⚠️ TODO (me): `--workers "${WEB_WORKERS:-1}" --threads "${WEB_THREADS:-4}"`. Why would two workers make a limit of 5 a minute really up to 10, and what does one worker cost instead? |
+| 2026-11-26 / `feat/api-hardening` `ui/vite.config.js`, `ui/scripts/finalize-csp.mjs`, `.github/workflows/cd.yml`, `docker-compose.yml` | Claude Code (Opus 5.5) | Task 3d of the day's prompt | Accepted | The production build puts a `Content-Security-Policy` meta tag first in `<head>`, with a placeholder where the services' origins go. After `config.js` is written, CD (and compose) run `finalize-csp.mjs`, which fills it from `config.js` and fails if an address is not https (http only for localhost), a placeholder is left, or an address is not allowed. Checked in a browser: the site's own pages caused no violation, a contact message reached the enquiries service, and a request to another origin was blocked. | ⚠️ TODO (me): the policy says `connect-src 'self' __CSP_API_ORIGINS__`. Why can that list not be written into `vite.config.js` directly, and what would break if it were left as the placeholder? |
+| 2026-11-27 / `docs/adr-9` `ADR.md` | Claude Code (Opus 5.5) | The day's prompt (sent 2026-11-26), Task 4: ADR-9, pipeline and testing, written from what exists. Full prompt: [the prompt for 2026-11-26](#prompt-for-2026-11-26-verbatim). | Modified | ADR-9 lists what each of the five workflows blocks on, read from the workflow files on 2026-11-27, how `cd.yml` gates the deploy on all five, how the cross-seam test works (a stand-in animals service over real HTTP, not compose) and what it cannot prove, what is deliberately not tested, and the accepted limitations. Checked against the repo instead of written from memory, which corrected two of its own first claims and surfaced three things that are not enforced: `main` has no branch protection (only the deploy is gated), the website has no tests or linter in CI, and the 70% gate does not measure the shared modules. ADR-4 is marked "Superseded by [9]", because tests no longer run against SQLite. | ⚠️ TODO (me): ADR-9 says `main` is not protected but a failing commit still never reaches Azure. Which line of `cd.yml` stops it, and what would branch protection add on top? |
 ---
 
 ## Explanation 1: why domain branches stay open across two days
@@ -2346,4 +2365,287 @@ Give me a short report:
 - which checks you could not run and why;
 - every placeholder I need to fill and every GitHub secret and variable I need to create;
 - the exact git commands per branch (create, push, and open the PR, in order), without running the pushes yourself.
+```
+
+## Prompt for 2026-11-25 (verbatim)
+
+```text
+# Task: DevSecOps pipeline (Part B) and hand-written scanners (Part C)
+
+Items 1 to 4 (migration runner, DB connection, role checks, courses CRUD, tests, UI shell, tooling, ADRs) are covered in a separate brief and live on other branches. This brief covers items 5 to 11. Start by reading the repo: every workflow in `.github/workflows/`, every Dockerfile, `infra/`, the service folders, `ui/`, the website folder, the README and the existing ADRs. Match existing conventions. If anything here conflicts with what the repo already does (for example `infra/` is Bicep when I assumed Terraform), stop and tell me before choosing.
+
+Do the two parts on two separate branches, both created from `main`:
+- Part B on `feat/devsecops-pipeline` (items 5 to 8)
+- Part C on `feat/hand-written-scanners` (items 9 to 11)
+
+`cd.yml` is edited on both branches, so keep each edit to `cd.yml` minimal and isolated (one added job or one `needs` line) to avoid painful merge conflicts. One commit per numbered item, conventional commit messages. Never push to `main`.
+
+SAST and SCA are today. DAST is on Friday: do NOT build it, but structure `scanners.yml` so a `dast` job can be added later without restructuring anything.
+
+---
+
+## Part B: `feat/devsecops-pipeline`
+
+### 5. Supply chain hardening
+- Pin every `uses:` in every workflow to a full 40 character commit SHA, with the human version in a trailing comment (`uses: actions/checkout@<sha> # v4.2.2`). Includes third party and first party actions. Local reusable workflow calls (`./.github/workflows/x.yml`) cannot and need not be pinned.
+- Resolve SHAs from the real repositories (`gh api`, `git ls-remote`). Never guess or invent a SHA. For annotated tags, dereference to the underlying commit (`^{}`), not the tag object. Verify each SHA actually belongs to the stated tag before writing it.
+- Set top level `permissions: {}` or `contents: read` on every workflow, then grant extra permissions per job, only what that job needs and with a comment saying why. Check every existing workflow, not just the new ones, and fix over broad ones (`write-all`, missing block). Remember a `workflow_call` workflow can only receive up to what its caller grants, so check the caller permissions in `cd.yml`.
+- Avoid `pull_request_target`, avoid interpolating `${{ github.event.* }}` directly into `run:` steps (pass through `env:`), and set `persist-credentials: false` on checkouts that do not push.
+- Pin each Dockerfile base image by digest, keeping the tag readable: `python:3.12-slim@sha256:<digest>`. Get the digest of the multi-arch index (for example `docker buildx imagetools inspect` or `crane digest`), not a single platform manifest, unless our deploy target is one fixed architecture, in which case tell me. This must stay compatible with the Rego rule "no `latest` tag" in item 8. Multi-stage builds: pin every `FROM`.
+
+### 6. `.github/dependabot.yml`
+- `pip`: one entry per service folder (find them, do not assume names), `directory` set to that folder.
+- `npm`: `/ui`.
+- `github-actions`: `/`.
+- `docker`: one entry per folder containing a Dockerfile.
+- Weekly schedule on all. Set `open-pull-requests-limit`, sensible labels, and group minor and patch updates to reduce PR noise. Security updates should still come through ungrouped if the config allows it.
+- Validate the YAML against the Dependabot schema or at least lint it. Every directory referenced must exist.
+
+### 7. `.pre-commit-config.yaml`
+- Hooks: ruff (lint with `--fix` and format) and gitleaks. Pin `rev` to a SHA or exact tag, following the same pinning philosophy as item 5.
+- Add a short README section: `pip install pre-commit`, `pre-commit install`, and how to run `pre-commit run --all-files`.
+- Run it once across the repo and report what it found. Do not mass reformat unrelated files without telling me. If ruff would reformat a lot, make that a separate commit.
+
+### 8. `security.yml` (use real tools, do not hand write scanners here)
+Triggers: `push`, `pull_request`, `workflow_call`, and a weekly `schedule` cron (pick an off peak minute, not `0 0`). Add `concurrency` with cancel in progress for PRs. `cd.yml` must call this workflow and gate deployment on it (`needs:`).
+
+Jobs:
+- **Trivy image scan**: build each service image (and the website/UI image if it has one) and scan it. Fail on HIGH and CRITICAL. Decide explicitly about `ignore-unfixed` and document the choice in a comment. Matrix over images, `fail-fast: false` so I see all results.
+- **Trivy config scan**: scan `infra/` and the Dockerfiles as misconfiguration (`trivy config`), failing on HIGH and CRITICAL.
+- **gitleaks**: scan the whole Git history, so `fetch-depth: 0`. Prefer running the gitleaks binary or the action in a way that needs no paid license; check what the action requires and tell me if a license is needed.
+- **Conftest**: apply Rego policies we write ourselves in `policy/`. Check how `infra/` is defined first. Terraform HCL can be parsed by Conftest directly, Bicep needs compiling to JSON first (add that step if so). Policies:
+  - Container Apps: `min_replicas = 0`, `max_replicas = 1`, HTTPS only ingress (no insecure connections allowed, `allowInsecure` false or equivalent).
+  - Dockerfiles: a non root `USER` exists and is the last `USER` instruction in the final stage, and no base image uses `latest` (also flag an untagged `FROM`, which defaults to latest).
+  - Write the policies so each violation message says what is wrong and which resource or line. Add Rego unit tests (`opa test` or `conftest verify`) with passing and failing fixtures in `policy/` and run them in the workflow too.
+- Upload SARIF to code scanning only if it is available for this repo (check visibility and plan). If not, skip it and say so. Do not break the job if it is unavailable.
+
+Smells to avoid here: copy pasted job blocks (use matrix or reusable steps), `continue-on-error: true` hiding failures, `|| true` after scanners, unpinned tool versions (pin Trivy, gitleaks and conftest versions or action SHAs), secrets echoed into logs, and one giant job that does everything.
+
+---
+
+## Part C: `feat/hand-written-scanners`
+
+All scanners are Python, standard library only (no new dependencies), type hinted, with a small `main()` and the logic in testable pure functions. Tests use `pytest` if the repo already does, otherwise `unittest`. Match the repo.
+
+### 9. `security/sast.py`
+Our own rules. Python files via the `ast` module (services). The website JavaScript via text rules (regex or a simple line scanner, with comments and string contents handled sensibly). Rules, each with a stable rule id:
+- SQL built from strings and passed to `execute()` or `executemany()`: f-strings, `%` formatting, `.format()`, and `+` concatenation, including when the string is first assigned to a variable then passed in. Parameterised queries (`execute(sql, params)` with a constant `sql`) must pass.
+- `eval` / `exec` calls.
+- `subprocess` with `shell=True` (all subprocess entry points, plus `os.system`).
+- `pickle` load/loads, and `yaml.load` without `SafeLoader` or `yaml.safe_load` being used.
+- MD5 or SHA-1 (`hashlib.md5`, `hashlib.sha1`, `hashlib.new("md5")`). Allow `usedforsecurity=False` only if I confirm; default is to flag it.
+- Hard coded secrets: assignments to names like `password`, `secret`, `token`, `api_key` with a non empty string literal. Do not flag `os.environ`/`getenv` lookups, empty strings, or obvious placeholders. Keep the heuristic simple and documented.
+- `debug=True` (Flask `run`, `app.debug = True`, and similar).
+- Network calls without a timeout: `requests.*`, `httpx.*`, `urllib.request.urlopen`. Handle import aliases (`import requests as r`, `from hashlib import md5`) so renaming does not bypass a rule.
+- Website JS: `dangerouslySetInnerHTML`, `innerHTML =` (also `outerHTML`, `insertAdjacentHTML` are optional extras, tell me if you add them) and `eval(`.
+
+Behaviour:
+- Output one line per finding: `file:line rule message`. Sort deterministically. Exit 1 if there is any finding, 0 if clean. Use exit 2 for tool errors (unreadable path, bad arguments), so CI can tell "found issues" from "scanner broke".
+- A file that fails to parse must produce a clear finding or error, never silently skip.
+- Suppression only via `# sast: ignore[rule] reason` (Python) and `// sast: ignore[rule] reason` (JS) on the finding line. The reason is mandatory: an ignore without a reason, or with an unknown rule id, is itself a finding. An ignore for rule A must not silence rule B.
+- Accept paths and directories as arguments, skip `node_modules`, `.venv`, `__pycache__`, `tests` fixtures only if configured, and say which exclusions are built in.
+- Tests: for EVERY rule, at least one bad example it must catch and one safe example it must not flag. Plus tests for aliases, ignore comments (valid, no reason, wrong rule), unparsable file, and exit codes. Run the scanner against the repo itself and fix real findings (or suppress with a reason) so it starts green.
+
+### 10. `security/sca.py`
+- Check every Python requirements file in each service: every package pinned with `==` (flag `>=`, `~=`, unpinned, URLs and VCS installs). Check `package-lock.json` exists for `ui/` and the website.
+- Read the FULL installed Python set, transitive dependencies included (for example `importlib.metadata` in the installed environment, or `pip freeze` output), and every package in `package-lock.json` (handle lockfile v2 and v3 `packages`, skip the root entry and `link` entries, handle nested `node_modules` paths).
+- Query the OSV batch API (`https://api.osv.dev/v1/querybatch`) using `urllib`, with ecosystems `PyPI` and `npm`. Normalise PyPI names (PEP 503). Respect the batch size limit by chunking, handle `next_page_token` pagination, set request timeouts, and retry transient failures a limited number of times.
+- querybatch only returns vulnerability ids, so fetch details (`/v1/vulns/{id}`) to get severity. Map to HIGH or CRITICAL using the database specific severity where present, and compute from the CVSS vector if it is not (implement CVSS v3 base score math in stdlib, or tell me if you want to scope that down). Decide and document what happens when severity is unknown. My preference is to fail closed.
+- Decide and document what happens when OSV is unreachable (fail closed in CI, with a clear message). Do not silently pass.
+- Exit 1 on any HIGH or CRITICAL finding or any pinning violation, 0 if clean, 2 on tool error. Print package, version, vulnerability id, severity and a fixed version if OSV gives one.
+- Inject the HTTP layer (a `fetch_json` function passed in), so tests never touch the network. Tests use a fake OSV response and cover: clean, one HIGH, one CRITICAL, only LOW or MEDIUM (passes), unknown severity, unpinned requirement, missing lock file, npm v2 and v3 lock parsing, chunking over the batch limit, pagination, and network failure.
+
+### 11. `scanners.yml`
+- A `sast` job and an `sca` job. `sca` runs once per service plus once for the website (matrix, `fail-fast: false`). Triggers: `push`, `pull_request` and `workflow_call`. `cd.yml` calls it and gates deployment on it.
+- Same hardening as Part B: actions pinned to full SHAs with version comments, least privilege `permissions`, `persist-credentials: false`, no untrusted interpolation in `run:`. Pin the Python version, install only what the scanner needs, cache nothing that could poison results.
+- For the Python SCA job, install that service's requirements into a clean virtual environment first so the transitive set is real, then run `security/sca.py`.
+- Leave a short comment marking where the DAST job will slot in on Friday.
+- Add a short `security/README.md`: what each scanner checks, how to run it locally, how to suppress a finding, how to add a rule.
+
+---
+
+## Quality bar
+
+Avoid:
+- Rule logic inside `main()`, giant if/elif chains (use a rule registry: each rule is a small function or class with an id, description and a check), duplicated AST walking per rule (one pass, dispatch to rules), magic strings for rule ids (constants), global mutable state.
+- Regex that matches inside comments or strings by accident without being acknowledged, and false positives that will teach people to ignore the tool. A noisy scanner is worse than a narrow one.
+- Swallowed exceptions, bare `except`, hidden network calls in pure functions, tests that depend on the clock, the network, or run order.
+- Workflow smells: `continue-on-error`, `|| true`, unpinned actions or tool versions, `latest` anywhere, duplicated steps across jobs, secrets in logs, over broad `permissions`, scripts of more than a few lines inline in YAML (move them to a file).
+
+Apply:
+- Registry/strategy pattern for rules, dependency injection for IO (file reader, HTTP fetcher), immutable finding objects (frozen dataclass), parse don't validate for inputs, deterministic output, clear exit codes.
+- Fail closed by default, and make every deliberate exception explicit, documented and justified in a comment.
+
+## Verification before you report back
+1. Run every scanner on the repo and show the output.
+2. Prove each rule and each Rego policy can fail: temporarily introduce a violation, show it is caught, then revert it.
+3. Run `actionlint` (and `zizmor` if it is available) over all workflows and report the results.
+4. Grep to confirm no `uses:` outside `./` is missing a 40 character SHA, and no Dockerfile `FROM` lacks a digest.
+5. Run the full test suite and linters.
+
+## Final report
+What was built per item, decisions I should double check (severity handling, fail closed choices, `ignore-unfixed`, digest type, any rule heuristics), anything you could not verify locally (for example workflows that only run on GitHub), and anything deliberately left out. No TODOs without a note in the report.
+```
+
+## Prompt for 2026-11-26 (verbatim)
+
+```text
+# Task: ledger reversals, batched animal names, API hardening, ADR-9
+
+Four tasks on four branches, all from `main`:
+1. `feat/ledger-reversal` (most important, do it first and do it best)
+2. `feat/cross-seam-names`
+3. `feat/api-hardening`
+4. `docs/adr-9` (last, written from what actually exists)
+
+Budget: this is about two days of work and the deadline is the 29th. After it come DAST, the cold-start screen (brief section 7.5), ADR-10, the report and the submission. Those are NOT part of this prompt, do not start them. Do not make decisions that block them (keep a clear slot for a future `dast` job, keep the health endpoint public and exempt from rate limiting, because the cold-start screen will poll it).
+
+Cut order if time runs short: first Task 3's log-flood limiter and the module drift test, then Task 2's cache eviction. Never cut anything from Task 1 or its tests. If you think you need to cut more, tell me, do not decide alone.
+
+## Ground rules
+
+- Read `CLAUDE.md` first and follow it, then all ADRs, every migration in `services/*/migrations/`, `system.yaml`, every OpenAPI file, the three services, the website and staff portal, the test setup, `AI_USAGE`, the existing `docs/evidence/` folders, and every workflow in `.github/workflows/`. Match existing conventions. If something here contradicts the repo, stop and tell me.
+- **Don't commit, don't push, don't create branches.** I make the commits. When a logical unit is done, snapshot it: list the changed files, then give me the exact commands in chat, one unit at a time: `git add <explicit paths>` then `git commit -m "<one line message>"`. For a new branch, give me the `git switch -c <name>` command. Run `pre-commit run --files <changed files>`, the linters, the tests and our scanners yourself before handing me the commands.
+- After each task, stop and wait until I confirm I committed before starting the next branch, so changes never mix. Hand over Task 1 completely first: I need to deploy it early to collect evidence on the live site.
+- Never deploy, never touch the live site, never run against a real database. Only the local and test SQL Server.
+- No secrets in code, tests, logs or commits.
+- Our SAST must stay green: no `innerHTML =`, no string built SQL, no `eval`. Test canary values must not look like secrets (name them `CANARY_VALUE`, not `password`); any suppression needs a written reason.
+- Coverage stays at or above 70% (currently 100%). Keep new code fully covered.
+- Tests run against the real test SQL Server, as today. Do not add an in-memory repository.
+- **AI_USAGE:** write today's AI_USAGE rows (one per new workflow step, migration or config change, each with a question for me). Fill only the AI columns, never my column. Do this as the last unit of each task.
+- English UI as today. There is no i18n system, do not create one. Keep user entered text (names, reasons) safe for Arabic: `dir="auto"` on any text users typed.
+
+---
+
+## Task 1: Ledger corrections, migration 003 (`feat/ledger-reversal`)
+
+The ledger is append-only: a trigger refuses every UPDATE and DELETE. That trigger stays exactly as it is. A correction is a NEW row, never an edit (the compensating action from the saga slide).
+
+### 1a. Migration `services/donations/migrations/003_ledger_reversals.sql`
+The engine is SQL Server (T-SQL via pymssql, migrations split on `GO`). Use a filtered unique index for "reversed only once" (a UNIQUE constraint allows one NULL), and enforce "no reversal of a reversal" with constraints (a composite foreign key on `(id, kind)` plus a CHECK), not a trigger. SQL Server has no BEFORE triggers anyway.
+
+- Confirm 003 is really next and read 001 and 002 for style. The runner checksums migrations, so never edit 003 after it has been applied.
+- Add to the existing `donations` table, dropping and recreating nothing:
+  - `kind` (`gift` or `reversal`) as `NOT NULL` with a DEFAULT of `gift` plus a CHECK. Every existing row becomes `gift` through the default, with NO `UPDATE`, so the append-only trigger never fires. Do not disable or touch the trigger, not even temporarily.
+  - `reverses_donation_id`, nullable.
+- Constraints, all enforced in the database:
+  - Row shape CHECK: a `gift` has NULL `reverses_donation_id`, a `reversal` has NOT NULL.
+  - "Reversed only once": a filtered unique index on `reverses_donation_id` WHERE it IS NOT NULL.
+  - "Must point at a real gift, never at a reversal": add `UNIQUE (id, kind)` on `donations` as the referenced key, then a composite FK from `(reverses_donation_id, <target kind>)` to `(id, kind)` with a CHECK forcing the target kind to be `gift`. The reversal row needs a column to carry the target kind: prefer a PERSISTED computed column that is `gift` whenever `reverses_donation_id` is not null (verify SQL Server accepts it inside a foreign key), otherwise a real column with a CHECK. Tell me which you used and that it is an extra column. NULL parts skip the FK check, so ordinary gifts are unaffected.
+  - Give every constraint, the default and the index an explicit name (SQL Server auto generates ugly ones otherwise).
+- `GO` batch traps: a statement cannot use a column added earlier in the same batch, so put the `ALTER TABLE ... ADD` in one batch and the constraints and index in the following ones. Filtered indexes need the right SET options (`QUOTED_IDENTIFIER ON` and friends) on every connection that writes to the table, so verify a normal INSERT through pymssql still works with the index in place.
+- The reason must be stored somewhere. Use an existing notes/memo column if one fits, otherwise add a nullable `reversal_reason` column in this same migration and tell me.
+- Migration test on the real test SQL Server, starting from a database that already holds gift rows: after 003 every old row is `gift`, UPDATE and DELETE are still refused on old and new rows, and the shape, once-only, must-exist and no-reversal-of-reversal rules each reject a bad INSERT at the database level. Running the migrator twice is a no-op, and the log line is `Applied migration 003_ledger_reversals.sql to snsour-ieu2024-donations-db` (do not change the runner's format).
+
+### 1b. `POST /api/donations/<id>/reversal` (staff only)
+- Required `reason` (trimmed, non empty, bounded length, Arabic allowed, unknown fields rejected if that is the convention). Existing staff auth, nothing new.
+- A reversal row copies amount, currency and earmark from the original, read from the database in the same transaction, never from the request. Amounts stay positive and the counters apply the sign from `kind`. Full reversals only. Check existing amount constraints first.
+- Check and insert in one transaction. The filtered unique index is the final arbiter: a double click must give one 201 and one clean 409, never a 500. Map pymssql error numbers (unique index and constraint violations, FK and CHECK violations) to the right responses, and verify the actual numbers against the real server rather than assuming them.
+- Responses with the project's error shape: 201 new row, 404 unknown id, 409 already reversed, 409 or 422 (follow the existing taxonomy) when the target is itself a reversal, 400 or 422 bad reason, 401 non staff.
+- Out of scope, but state it in the docs: a reversal is a ledger entry only, it does not refund a card payment at the provider.
+
+### 1c. Counters
+Net = gifts minus reversals. Audit every query that sums or counts donations (homepage impact counters, per animal totals, gift and donor counts). A reversed gift must not count, a reversal row must never count as a gift. If anything is cached, make sure it is correct after a reversal. One place computes net totals.
+
+### 1d. Staff portal
+- "Reverse" button per reversible donation, with a confirm step and a required reason field. Disable it while the request runs, show the server message on 409, refresh the list and counters on success.
+- Reversed gifts are shown as reversed (badge or strikethrough, not colour alone), reversal rows are labelled and linked to the original, neither shows a Reverse button.
+- No `innerHTML`: use `textContent` or equivalent. `dir="auto"` on the reason text. Keyboard accessible, focus managed in the confirm step.
+
+### 1e. Pipeline (`cd.yml`)
+- After the deploy, add a step that prints each app's start-up log, so the migration log line stays in the Actions log permanently (no Log Analytics, so it vanishes when the app scales to zero).
+- The app may be scaled to zero: wake it first with a health request (retries and a timeout), wait for startup, then fetch console logs with the Azure CLI (confirm which command and flags work without Log Analytics, and tell me if none do). `if: always()`.
+- It must not mask a failed deploy and must not fail a good deploy because logs are empty. If the migration line is missing, emit `::warning::`.
+- Same hardening as the other workflows: SHA pinned actions with version comments, least privilege `permissions`, nothing untrusted interpolated into `run:`, no secrets printed.
+
+### 1f. Tests and docs
+Cover: reverse once, twice (409), reverse a reversal, unknown id, missing reason, non staff, concurrent double reversal, counters before and after, reversed gift excluded from counts. OpenAPI (endpoint plus new response fields), `system.yaml`, contract tests green.
+
+### 1g. Evidence checklist (about 10% of the grade, section 4.6)
+I collect the evidence by hand on the live site, you must not. Create `docs/evidence/2026-11-27-migration-003/README.md` (match the format of the existing evidence folders): the log line to find (`Applied migration 003_ledger_reversals.sql to snsour-ieu2024-donations-db`), the "after" screenshots needed (donation list showing a reversed gift and its reversal, counters), and the exact steps for the live reversal. Do not fabricate evidence.
+
+---
+
+## Task 2: Batched animal names with a cache (`feat/cross-seam-names`)
+
+### 2a. Animals service
+- `GET /api/animals/names?ids=1,3,5`, returns only ids and names, documented in its OpenAPI file.
+- Make sure the route cannot be captured by `/api/animals/<id>`.
+- Validate: positive integers only, deduplicate, cap the count (document it), reject empty or malformed input with the project's error shape. Unknown ids are simply absent. Do not expose animals that the public endpoints already hide. Same auth and conventions as the existing server-to-server call.
+
+### 2b. Donations service
+- When staff list donations, collect the page's DISTINCT animal ids and call the animals service ONCE, with the existing client and timeout.
+- In-memory cache, TTL of a few minutes (env var, default in code, listed in `system.yaml`), injectable clock, a lock (the container will run several threads, see the workers decision in Task 3), only fetch ids that miss, never cache failures. Add a maximum size with eviction (cut candidate).
+- Outage: if the animals service is down, slow, or returns an error or malformed body, the list still loads. The API returns the name as `null`, the portal shows `#1 (name unavailable)`. An id absent from a successful response also falls back to `#id`.
+- The earmark check NEVER uses the cache and always asks fresh, because a wrong answer would put money against the wrong animal. Make that structural: separate the cached list lookup from the earmark client so the cache is unreachable from the earmark path. Test that it stays live after the cache is warm and fails closed when the animals service is down.
+
+### 2c. Portal
+Show names escaped (no `innerHTML`), `dir="auto"`, the fallback text above.
+
+### 2d. Tests
+Cache with a fake clock (fresh, expired, miss, and eviction if built); outage fallback (timeout, connection error, 5xx, malformed); one call for many ids (a page with many donations and a few distinct animals makes exactly one deduplicated call, a second load inside the TTL makes none); animals endpoint (valid, duplicates, too many, malformed, unknown, route not shadowed); one integration test across the seam. Use compose if the repo and CI already support it, otherwise a stub of the animals service. Tell me which, ADR-9 will record it. This is the second server-to-server flow `CLAUDE.md` requires and the "app level cache" from the backend slides.
+
+---
+
+## Task 3: API hardening (`feat/api-hardening`)
+
+All three services. Check how they share code. If there is no shared mechanism, do not invent one: keep one small identical module per service, add a test that fails if the copies drift (cut candidate), and list the duplication in the report.
+
+### 3a. Workers decision (do this first, it changes the rest)
+Each container runs 2 gunicorn worker processes (`WEB_WORKERS:-2`), each with its own memory, so a limit of 5 per minute is really up to 10 and the name cache exists twice. `max_replicas = 1` is true but not enough. Default to 1 worker with threads (`--workers 1 --threads 4`), driven by env vars, so the limiter and cache are truly shared. If you find a blocker (for example a DB connection that is not thread safe), keep 2 workers and document the doubled limit instead. Either way, tell me the cost (one worker means a slow or CPU heavy request can delay others, more reliance on thread safe code). Change the Dockerfiles or entrypoints, keep the base image digest pin, the non root `USER` and the Conftest policies passing. Record the choice in `system.yaml`.
+
+### 3b. Rate limiting
+- Limited: the public forms (adoption and foster requests, contact and volunteer messages, starting a card payment) and failed staff authentication (401s on staff routes, in each service). There is no login endpoint: every staff request carries the shared password and each service checks it itself (the comparison already uses `hmac.compare_digest`, leave it).
+- For staff auth: check the failed-auth bucket BEFORE verifying the password so a locked out client cannot keep guessing, count only requests that presented a wrong credential (a missing credential is not a guess, tell me if you decide otherwise), do not count successes. Each service keeps its own counts, note that the effective budget is per service.
+- Separate named buckets, so a flood on a public form never locks staff out. Do not limit the health endpoint. Do not limit the payment provider's webhook like a public form (own policy or none, explain).
+- Over the limit: 429 with the project's error shape and `Retry-After` (integer seconds, at least 1, correct).
+- Counts in memory. Document the limitation: counts reset when the app scales to zero.
+- Injected clock, thread safe, bounded memory (evict idle keys, cap tracked keys). Declarative policy (decorator or middleware), not `if` blocks in handlers.
+- Client identity: behind the Container Apps ingress the socket peer is the proxy and clients can send their own `X-Forwarded-For`. Never trust the leftmost value. Make the number of trusted hops configurable, read the address accordingly, and test that a spoofed header cannot bypass a limit.
+- Limits and trusted hop count come from environment variables, validated once at startup (fail fast on nonsense), listed with defaults in `system.yaml`. If `infra/` declares the apps' env vars, add them there too, run `terraform fmt`, `validate` and Conftest, and apply nothing.
+
+### 3c. Security headers on every response (including 404, 429, 500)
+`X-Content-Type-Options: nosniff`; a strict `Content-Security-Policy` for the JSON APIs (for example `default-src 'none'; frame-ancestors 'none'`, with a separate policy for any HTML docs page); `Referrer-Policy: no-referrer`; `Strict-Transport-Security` (long max-age, `includeSubDomains`, no `preload`); `Cache-Control: no-store` on staff responses (define it precisely: every route behind staff auth including its 401 and 403, and test that public responses do not get it by accident). CORS behaviour must not change.
+
+### 3d. Website CSP meta tag
+The website cannot send headers from Azure Storage, so it gets a `<meta http-equiv="Content-Security-Policy">` as the first element in `<head>` of every HTML page it ships.
+- The API origins are only known at deploy time: CD writes them into `config.js` from Terraform's output. So `connect-src` and `img-src` (and any other directive that depends on a deploy time address) must be completed in `cd.yml`'s website step, in the same step that writes `config.js`, not hard coded. Use a clear placeholder in the source and substitute it safely (values through `env:`, no shell injection).
+- The meta tag goes into the PRODUCTION build only. Vite's dev server injects inline scripts, so it must not get the tag.
+- Check the built `dist` HTML for inline scripts and styles and fit the policy to what is really there. `script-src 'self'`, no `unsafe-inline` for scripts. Do not put `frame-ancestors`, `report-uri` or `sandbox` in a meta tag (ignored by browsers).
+- Add a CD check that fails if a placeholder is left unsubstituted or if any origin in `config.js` is not allowed by the final policy.
+
+### 3e. Security events as JSON log lines
+- Events (constants): staff authentication failed, request rate limited, webhook signature invalid, earmark not verified.
+- Fixed schema with a WHITELIST of fields (timestamp, level, service, event, request id, route template, status, short reason code, non personal ids such as donation or animal id). Never passwords, tokens, names, emails, bodies, query strings, Authorization or Cookie headers, or exception messages.
+- IP addresses: decision C is to leave them out of the logs entirely. The limiter may hold them in memory as keys, they are never logged.
+- Do not let an attacker flood the logs: for repeated rate limit events log the first per key per window plus a counter (cut candidate, the first one to go).
+- Tests for each limit, each header and each event. Event tests send canary strings (email, name, password, token) and assert none appear in the log line.
+- OpenAPI: the 429 response and `Retry-After` header on every affected operation. `system.yaml` updated. Contract tests green.
+
+---
+
+## Task 4: ADR-9, pipeline and testing (`docs/adr-9`)
+
+Last, and written from what was actually built, not from this brief.
+- Check whether the Part B and C pipeline work (`security.yml`, `scanners.yml`, `policy/`, `security/`) is on `main`. If not, tell me which base you used so I know the PR depends on it.
+- Existing ADR template (context, decision, consequences, alternatives).
+- Content: what CI and CD block on and why, verified against the real workflow files (tests, 70% coverage, lint, contracts, Terraform checks, Trivy, gitleaks, Conftest, our own SAST and SCA). If something is not actually enforced, say so. How the cross seam test works (compose or stub, what it proves and cannot). What is deliberately not tested and why (real payment provider calls, scale to zero behaviour, refunds, and anything you found). Accepted limitations: rate limit counts reset on scale to zero, per service budgets, reversal is ledger only, name cache can be minutes stale. The workers decision, tests running against the real SQL Server, and the CSP completed at deploy time.
+- Read ADR-4. If ADR-9 replaces it, mark it "Superseded by [9]" (status line and ADR index). If it still holds, leave it and tell me.
+
+---
+
+## Quality bar
+
+Avoid: business logic in routes, SQL in services, a god module, duplicated sum or count queries, magic strings (event names, kinds, header names are constants), boolean flag arguments, swallowed exceptions, global mutable state (limiter, cache and logger are built once at the composition root and injected), sleeps and network in unit tests (fake clocks), over mocking, string built SQL.
+Apply: parse don't validate at the boundary, typed errors mapped centrally, constraints in the database as the source of truth with the service mapping their errors, fail closed on anything touching money, small pure functions for net totals and TTL and window logic.
+
+## Verification before reporting each task
+1. Tests with coverage per service (show the numbers), ruff, `pre-commit run --files`, `security/sast.py`, `security/sca.py`.
+2. Prove the database rules by attempting the forbidden operations in tests and showing they fail.
+3. `actionlint` (and `zizmor` if available) on changed workflows, and confirm no new `uses:` lacks a full SHA.
+4. If `infra/` changed: `terraform fmt -check`, `validate`, Conftest. Build the images if Docker is available.
+5. For Task 3: show a real response with its headers, and the final CSP meta from a production build with sample origins.
+
+## Report per task
+What was built, decisions I should double check (the target kind column, where the reason is stored, error number mapping, workers choice and its cost, limiter numbers, trusted hop count, CSP placeholders, log fields), anything you could not verify locally (the live `cd.yml` step, Azure CLI log behaviour, the real ingress `X-Forwarded-For`), the commit commands, and anything left out. No TODOs without a note in the report.
 ```
