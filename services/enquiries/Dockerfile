@@ -28,7 +28,7 @@ RUN pip install -r requirements.txt \
 
 # Then the code, file by file. No `COPY . .`: only what the service runs goes
 # in, so tests, caches and any stray .env on the build machine stay out.
-COPY app.py config.py cors.py db.py migrate.py security.py entrypoint.sh ./
+COPY app.py config.py cors.py db.py migrate.py hardening.py security.py security_events.py entrypoint.sh ./
 COPY enquiries/ enquiries/
 COPY migrations/ migrations/
 

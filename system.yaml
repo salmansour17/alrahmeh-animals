@@ -44,7 +44,13 @@ services:
       SAMPLE_ANIMALS: { default: "1", description: "Add six sample animals at start when there are none; 0 starts empty" }
       FLASK_DEBUG: { default: "0", description: "Flask debug mode for development; never on in a container" }
       GIT_SHA: { default: dev, description: "Git commit of the build, set at image build time and reported by /health" }
-      WEB_WORKERS: { default: 2, description: "Number of gunicorn worker processes in the container" }
+      WEB_WORKERS: { default: 1, description: "Gunicorn worker processes; 1, so in-memory rate limits and caches are shared by every request" }
+      WEB_THREADS: { default: 4, description: "Threads in the gunicorn worker, serving requests side by side" }
+      RATE_LIMIT_PUBLIC_FORM_MAX: { default: 5, description: "Public form submissions allowed per client per window (1-1000); over it, 429 with Retry-After. Counts live in memory and reset when the app scales to zero" }
+      RATE_LIMIT_PUBLIC_FORM_WINDOW_S: { default: 60, description: "Window in seconds for the public form limit (1-86400)" }
+      RATE_LIMIT_STAFF_AUTH_MAX: { default: 5, description: "Wrong staff passwords allowed per client per window, in this service alone (1-1000)" }
+      RATE_LIMIT_STAFF_AUTH_WINDOW_S: { default: 900, description: "Window in seconds for the wrong-password limit (1-86400)" }
+      TRUSTED_PROXY_HOPS: { default: 1, description: "Proxies in front of the app that append to X-Forwarded-For (the Container Apps ingress: 1); 0 trusts the header not at all (0-5). A nonsense value in any of these stops the start" }
     azure:
       container_app: <PREFIX>-animals
       sql_database: <PREFIX>-animals-db
@@ -79,7 +85,13 @@ services:
       BANK_ACCOUNT_NAME: { default: "", description: "Account holder for bank transfers" }
       FLASK_DEBUG: { default: "0", description: "Flask debug mode for development; never on in a container" }
       GIT_SHA: { default: dev, description: "Git commit of the build, set at image build time and reported by /health" }
-      WEB_WORKERS: { default: 2, description: "Number of gunicorn worker processes in the container" }
+      WEB_WORKERS: { default: 1, description: "Gunicorn worker processes; 1, so in-memory rate limits and caches are shared by every request" }
+      WEB_THREADS: { default: 4, description: "Threads in the gunicorn worker, serving requests side by side" }
+      RATE_LIMIT_PUBLIC_FORM_MAX: { default: 5, description: "Public form submissions allowed per client per window (1-1000); over it, 429 with Retry-After. Counts live in memory and reset when the app scales to zero" }
+      RATE_LIMIT_PUBLIC_FORM_WINDOW_S: { default: 60, description: "Window in seconds for the public form limit (1-86400)" }
+      RATE_LIMIT_STAFF_AUTH_MAX: { default: 5, description: "Wrong staff passwords allowed per client per window, in this service alone (1-1000)" }
+      RATE_LIMIT_STAFF_AUTH_WINDOW_S: { default: 900, description: "Window in seconds for the wrong-password limit (1-86400)" }
+      TRUSTED_PROXY_HOPS: { default: 1, description: "Proxies in front of the app that append to X-Forwarded-For (the Container Apps ingress: 1); 0 trusts the header not at all (0-5). A nonsense value in any of these stops the start" }
     calls:
       - service: animals
         url_env: ANIMALS_URL
@@ -114,7 +126,13 @@ services:
       CORS_ORIGINS: { default: "", description: "Website origins allowed to call from a browser, comma separated; empty allows none" }
       FLASK_DEBUG: { default: "0", description: "Flask debug mode for development; never on in a container" }
       GIT_SHA: { default: dev, description: "Git commit of the build, set at image build time and reported by /health" }
-      WEB_WORKERS: { default: 2, description: "Number of gunicorn worker processes in the container" }
+      WEB_WORKERS: { default: 1, description: "Gunicorn worker processes; 1, so in-memory rate limits and caches are shared by every request" }
+      WEB_THREADS: { default: 4, description: "Threads in the gunicorn worker, serving requests side by side" }
+      RATE_LIMIT_PUBLIC_FORM_MAX: { default: 5, description: "Public form submissions allowed per client per window (1-1000); over it, 429 with Retry-After. Counts live in memory and reset when the app scales to zero" }
+      RATE_LIMIT_PUBLIC_FORM_WINDOW_S: { default: 60, description: "Window in seconds for the public form limit (1-86400)" }
+      RATE_LIMIT_STAFF_AUTH_MAX: { default: 5, description: "Wrong staff passwords allowed per client per window, in this service alone (1-1000)" }
+      RATE_LIMIT_STAFF_AUTH_WINDOW_S: { default: 900, description: "Window in seconds for the wrong-password limit (1-86400)" }
+      TRUSTED_PROXY_HOPS: { default: 1, description: "Proxies in front of the app that append to X-Forwarded-For (the Container Apps ingress: 1); 0 trusts the header not at all (0-5). A nonsense value in any of these stops the start" }
     azure:
       container_app: <PREFIX>-enquiries
       sql_database: <PREFIX>-enquiries-db

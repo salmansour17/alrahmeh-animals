@@ -51,6 +51,7 @@ paths:
                 properties:
                   tables: {type: array, items: {type: string}}
         "401": {$ref: "#/components/responses/Unauthorised"}
+        "429": {$ref: "#/components/responses/TooManyRequests"}
         "503": {$ref: "#/components/responses/StaffDisabled"}
 
   /api/animals:
@@ -104,6 +105,7 @@ paths:
                       notes: {type: string, nullable: true}
         "400": {$ref: "#/components/responses/BadRequest"}
         "401": {$ref: "#/components/responses/Unauthorised"}
+        "429": {$ref: "#/components/responses/TooManyRequests"}
         "503": {$ref: "#/components/responses/StaffDisabled"}
 
   /api/animals/stats:
@@ -223,6 +225,7 @@ paths:
                             reason: {type: string, nullable: true}
                             changed_at: {type: string, description: "YYYY-MM-DD HH:MM:SS, UTC"}
         "401": {$ref: "#/components/responses/Unauthorised"}
+        "429": {$ref: "#/components/responses/TooManyRequests"}
         "404": {$ref: "#/components/responses/NotFound"}
         "503": {$ref: "#/components/responses/StaffDisabled"}
 
@@ -254,6 +257,7 @@ paths:
               schema: {$ref: "#/components/schemas/Profile"}
         "400": {$ref: "#/components/responses/BadRequest"}
         "401": {$ref: "#/components/responses/Unauthorised"}
+        "429": {$ref: "#/components/responses/TooManyRequests"}
         "404": {$ref: "#/components/responses/NotFound"}
         "503": {$ref: "#/components/responses/StaffDisabled"}
 
@@ -302,6 +306,7 @@ paths:
                   photo_url: {type: string}
         "400": {$ref: "#/components/responses/BadRequest"}
         "401": {$ref: "#/components/responses/Unauthorised"}
+        "429": {$ref: "#/components/responses/TooManyRequests"}
         "404": {$ref: "#/components/responses/NotFound"}
         "413": {$ref: "#/components/responses/TooLarge"}
         "415": {$ref: "#/components/responses/UnsupportedMediaType"}
@@ -334,6 +339,7 @@ paths:
       responses:
         "201": {$ref: "#/components/responses/Received"}
         "400": {$ref: "#/components/responses/BadRequest"}
+        "429": {$ref: "#/components/responses/TooManyRequests"}
         "404": {$ref: "#/components/responses/NotFound"}
         "409": {$ref: "#/components/responses/Conflict"}
         "415": {$ref: "#/components/responses/UnsupportedMediaType"}
@@ -364,6 +370,7 @@ paths:
               schema: {$ref: "#/components/schemas/Animal"}
         "400": {$ref: "#/components/responses/BadRequest"}
         "401": {$ref: "#/components/responses/Unauthorised"}
+        "429": {$ref: "#/components/responses/TooManyRequests"}
         "404": {$ref: "#/components/responses/NotFound"}
         "409": {$ref: "#/components/responses/Conflict"}
         "503": {$ref: "#/components/responses/StaffDisabled"}
@@ -395,6 +402,7 @@ paths:
               schema: {$ref: "#/components/schemas/MedicalRecord"}
         "400": {$ref: "#/components/responses/BadRequest"}
         "401": {$ref: "#/components/responses/Unauthorised"}
+        "429": {$ref: "#/components/responses/TooManyRequests"}
         "404": {$ref: "#/components/responses/NotFound"}
         "503": {$ref: "#/components/responses/StaffDisabled"}
 
@@ -414,6 +422,7 @@ paths:
                 properties:
                   offline_adoptions: {type: array, items: {$ref: "#/components/schemas/OfflineAdoption"}}
         "401": {$ref: "#/components/responses/Unauthorised"}
+        "429": {$ref: "#/components/responses/TooManyRequests"}
         "503": {$ref: "#/components/responses/StaffDisabled"}
     post:
       tags: [staff]
@@ -439,6 +448,7 @@ paths:
               schema: {$ref: "#/components/schemas/OfflineAdoption"}
         "400": {$ref: "#/components/responses/BadRequest"}
         "401": {$ref: "#/components/responses/Unauthorised"}
+        "429": {$ref: "#/components/responses/TooManyRequests"}
         "503": {$ref: "#/components/responses/StaffDisabled"}
 
   /api/requests:
@@ -463,6 +473,7 @@ paths:
                   requests: {type: array, items: {$ref: "#/components/schemas/PlacementRequest"}}
         "400": {$ref: "#/components/responses/BadRequest"}
         "401": {$ref: "#/components/responses/Unauthorised"}
+        "429": {$ref: "#/components/responses/TooManyRequests"}
         "503": {$ref: "#/components/responses/StaffDisabled"}
 
   /api/requests/{request_id}/decision:
@@ -494,6 +505,7 @@ paths:
               schema: {$ref: "#/components/schemas/PlacementRequest"}
         "400": {$ref: "#/components/responses/BadRequest"}
         "401": {$ref: "#/components/responses/Unauthorised"}
+        "429": {$ref: "#/components/responses/TooManyRequests"}
         "404": {$ref: "#/components/responses/NotFound"}
         "409": {$ref: "#/components/responses/Conflict"}
         "503": {$ref: "#/components/responses/StaffDisabled"}
@@ -580,6 +592,19 @@ components:
         submitted_at: {type: string, description: "YYYY-MM-DD HH:MM:SS, UTC"}
 
   responses:
+    TooManyRequests:
+      description: >
+        Rate limited: too many submissions of a public form, or too many wrong
+        staff passwords, from this client. Retry after the number of seconds
+        in Retry-After. The counts are kept in memory by this service and
+        reset when it scales to zero.
+      headers:
+        Retry-After:
+          description: Whole seconds to wait before trying again, at least 1
+          schema: {type: integer, minimum: 1}
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/Error"}
     Received:
       description: Received (stored, or quietly dropped as spam)
       content:

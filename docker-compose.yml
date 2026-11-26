@@ -135,8 +135,9 @@ services:
 
   ui-build:
     # One-off: installs the exact versions in package-lock.json, builds the
-    # website, writes the config.js that tells it where the services are, and
-    # exits. node_modules lives in its own volume, so the container never uses
+    # website, writes the config.js that tells it where the services are,
+    # completes the website's Content-Security-Policy from it (vite.config.js),
+    # and exits. node_modules lives in its own volume, so the container never uses
     # (or overwrites) a node_modules installed on the host for another OS.
     image: node:22.12.0-alpine
     working_dir: /ui
@@ -150,7 +151,8 @@ services:
       - >-
         npm ci --no-audit --no-fund &&
         npm run build -- --outDir /out --emptyOutDir &&
-        printf 'window.ALRAHMEH_CONFIG = {\n  animalsUrl: "http://localhost:8001",\n  donationsUrl: "http://localhost:8002",\n  enquiriesUrl: "http://localhost:8003",\n};\n' > /out/config.js
+        printf 'window.ALRAHMEH_CONFIG = {\n  animalsUrl: "http://localhost:8001",\n  donationsUrl: "http://localhost:8002",\n  enquiriesUrl: "http://localhost:8003",\n};\n' > /out/config.js &&
+        node scripts/finalize-csp.mjs /out
     restart: "no"
 
   web:
