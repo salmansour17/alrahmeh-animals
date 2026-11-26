@@ -22,6 +22,7 @@ from collections.abc import Callable, Iterator
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FutureTimeout
 from contextlib import contextmanager
+from contextvars import ContextVar, Token
 from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import parse_qs, unquote, urlsplit
@@ -142,6 +143,16 @@ class Connection:
         return cursor
 
 
+@dataclass
+class _RequestConnection:
+    """The one connection a web request shares between its units of work.
+    Opened the first time a unit of work needs it, closed when the request
+    ends. `busy` is True while a unit of work is using it."""
+
+    raw: Any = None
+    busy: bool = False
+
+
 class Database:
     """Owns the connection settings and hands out transactions."""
 
@@ -165,6 +176,10 @@ class Database:
         # waiting for real time to pass.
         self._connect = connect
         self._sleep = sleep
+        # The current request's shared connection, if a request is running.
+        # A ContextVar is private to each thread, so two requests served at
+        # once on two threads never see each other's connection.
+        self._request: ContextVar[_RequestConnection | None] = ContextVar(f"db_request_{id(self)}", default=None)
 
     @classmethod
     def from_url(cls, url: str | None, **options: Any) -> Database:
@@ -181,10 +196,11 @@ class Database:
     def connect(self, retry: bool = True, login_timeout_s: int = LOGIN_TIMEOUT_S) -> Any:
         """Open a connection, retrying with backoff while the database wakes up.
 
-        A new connection per unit of work rather than one shared connection: a
-        connection cannot safely serve two requests at once, and the server
-        handles requests on several threads. retry=False makes one attempt
-        only, for the health check, which must answer quickly either way.
+        Never one connection shared by the whole service: a connection cannot
+        safely serve two requests at once, and the server handles requests on
+        several threads. Within one request, units of work share a connection
+        (see begin_request). retry=False makes one attempt only, for the health
+        check, which must answer quickly either way.
         """
         attempts = self._attempts if retry else 1
         delay = self._first_delay_s
@@ -228,23 +244,80 @@ class Database:
             options["encryption"] = "require"
         return self._connect(**options)
 
+    def begin_request(self) -> Token:
+        """Start sharing one connection between the units of work of the
+        request about to be served. Opens nothing yet: a request that never
+        touches the database (a CORS preflight, /health) costs nothing.
+
+        Why: opening a connection to Azure SQL means a TLS handshake and a
+        login, about 0.8 s from the Container Apps in Germany to the database
+        in Spain. GET /api/animals/<id> runs four units of work, so it took
+        3.4 s with a connection each, past the donations service's 2-second
+        earmark check. Sharing one makes it about one login's worth.
+        """
+        return self._request.set(_RequestConnection())
+
+    def end_request(self, token: Token) -> None:
+        """Close the request's shared connection, if one was opened. Called
+        whatever the request's outcome, so no connection outlives it."""
+        shared = self._request.get()
+        self._request.reset(token)
+        if shared is not None and shared.raw is not None:
+            shared.raw.close()
+
     @contextmanager
-    def unit_of_work(self, retry: bool = True, login_timeout_s: int = LOGIN_TIMEOUT_S) -> Iterator[Connection]:
+    def unit_of_work(
+        self, retry: bool = True, login_timeout_s: int = LOGIN_TIMEOUT_S, share: bool = True
+    ) -> Iterator[Connection]:
         """Run a block inside one transaction, then commit or roll back.
 
         Committing on the way out and rolling back on an exception means a
         half-applied write cannot survive an error, and callers never have to
-        remember to commit.
+        remember to commit. Each unit of work is its own transaction whether
+        or not it shares the request's connection: sharing saves the login,
+        nothing else.
+
+        It opens a connection of its own, as before, outside a request (the
+        migrations, the sample animals), when share=False (the health check),
+        and inside another unit of work, so a nested one stays independent.
         """
-        raw = self.connect(retry=retry, login_timeout_s=login_timeout_s)
+        shared = self._request.get() if share else None
+        if shared is None or shared.busy:
+            raw = self.connect(retry=retry, login_timeout_s=login_timeout_s)
+            try:
+                yield Connection(raw)
+                raw.commit()
+            except Exception:
+                raw.rollback()
+                raise
+            finally:
+                raw.close()
+            return
+
+        if shared.raw is None:
+            shared.raw = self.connect(retry=retry, login_timeout_s=login_timeout_s)
+        shared.busy = True
         try:
-            yield Connection(raw)
-            raw.commit()
+            yield Connection(shared.raw)
+            shared.raw.commit()
+        except (pymssql.OperationalError, pymssql.InterfaceError):
+            # The connection itself failed (dropped, database paused): drop
+            # it, so the request's next unit of work logs in afresh.
+            self._discard(shared)
+            raise
         except Exception:
-            raw.rollback()
+            shared.raw.rollback()
             raise
         finally:
+            shared.busy = False
+
+    @staticmethod
+    def _discard(shared: _RequestConnection) -> None:
+        raw, shared.raw = shared.raw, None
+        try:
             raw.close()
+        except pymssql.Error:
+            logger.warning("Closing a failed database connection raised; it is dropped either way")
 
     def check_read_write(self, deadline_s: float = HEALTH_DEADLINE_S) -> None:
         """Prove the service can write to and read from its own database, for
@@ -263,7 +336,9 @@ class Database:
             raise TimeoutError("no answer from the database before the health check's deadline") from None
 
     def _probe(self) -> None:
-        with self.unit_of_work(retry=False, login_timeout_s=HEALTH_LOGIN_TIMEOUT_S) as connection:
+        # Its own connection, never the request's: the check must prove a
+        # fresh login works, within its own short timeout.
+        with self.unit_of_work(retry=False, login_timeout_s=HEALTH_LOGIN_TIMEOUT_S, share=False) as connection:
             connection.execute("UPDATE health_probe SET checked_at = SYSUTCDATETIME() WHERE id = 1")
             row = connection.execute("SELECT checked_at FROM health_probe WHERE id = 1").fetchone()
         if row is None:
