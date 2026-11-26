@@ -28,7 +28,8 @@ DEFAULT_VERSION = "dev"
 # website's address.
 DEFAULT_PUBLIC_BASE_URL = "http://localhost:5173"
 # Where the animals service answers. The default is its name inside Docker
-# Compose; running outside Compose, set ANIMALS_URL (e.g. http://localhost:8001).
+# Compose; running outside Compose, set ANIMALS_URL (e.g. http://127.0.0.1:8001;
+# not localhost, which on Windows costs about 2 s trying IPv6 first).
 DEFAULT_ANIMALS_URL = "http://animals:8000"
 # Every call to the animals service gives up after this many seconds, so a slow
 # or stopped animals service can never hang a request here.

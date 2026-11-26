@@ -138,7 +138,7 @@ and `ADMIN_PASSWORD` are read by every service; the rest by the one named.
 | `STRIPE_WEBHOOK_SECRET` | _(unset)_ | _(donations)_ Signing secret (`whsec_…`) used to verify that webhook calls really come from Stripe. Unset disables card donations. |
 | `CLIQ_ALIAS` | _(unset)_ | _(donations)_ The rescue's CliQ alias, shown on the donate page as a way to give without a card. Unset hides it. |
 | `BANK_NAME`, `BANK_IBAN`, `BANK_ACCOUNT_NAME` | _(unset)_ | _(donations)_ Bank-transfer details for the donate page. Shown only when at least the IBAN and account name are set. |
-| `ANIMALS_URL` | `http://animals:8000` | _(donations)_ Where the animals service answers. The default is its Docker Compose name; outside Compose, e.g. `http://localhost:8001`. |
+| `ANIMALS_URL` | `http://animals:8000` | _(donations)_ Where the animals service answers. The default is its Docker Compose name; outside Compose, e.g. `http://127.0.0.1:8001` (not `localhost`: on Windows, Python tries IPv6 first and waits about 2 s before falling back, past the 2-second earmark check). |
 | `ANIMALS_TIMEOUT_S` | `2` | _(donations)_ Seconds before a call to the animals service is given up. Values outside (0, 60] fall back to the default. |
 | `PUBLIC_BASE_URL` | `http://localhost:5173` | _(donations)_ The website's origin. Donors return here after paying. Must be a bare `http(s)://host[:port]`; anything else disables card donations. |
 
