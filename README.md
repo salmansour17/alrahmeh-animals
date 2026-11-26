@@ -123,7 +123,8 @@ staff donation earmarked for an animal is refused, with a 503 asking to retry
 
 Every setting is read from the environment at startup. No `.env` file is
 required. `PORT`, `DATABASE_URL`, `CORS_ORIGINS`, `FLASK_DEBUG`, `WEB_WORKERS`,
-`WEB_THREADS` and `ADMIN_PASSWORD` are read by every service; the rest by the one named.
+`WEB_THREADS`, `ADMIN_PASSWORD`, the `RATE_LIMIT_*` settings and
+`TRUSTED_PROXY_HOPS` are read by every service; the rest by the one named.
 
 | Variable | Default | Purpose |
 |---|---|---|
@@ -132,6 +133,9 @@ required. `PORT`, `DATABASE_URL`, `CORS_ORIGINS`, `FLASK_DEBUG`, `WEB_WORKERS`,
 | `CORS_ORIGINS` | _(none)_ | Website origins allowed to call the service from a browser, comma separated, e.g. `http://localhost:8080`. No wildcard; unset allows none. |
 | `WEB_WORKERS` | `1` | gunicorn worker processes in the container. One, so the in-memory rate limits and name cache are shared by every request. |
 | `WEB_THREADS` | `4` | Threads in that worker, serving requests side by side. |
+| `RATE_LIMIT_PUBLIC_FORM_MAX`, `RATE_LIMIT_PUBLIC_FORM_WINDOW_S` | `5`, `60` | Public form submissions allowed per client per window (the request, contact and checkout forms); over it, `429` with `Retry-After`. |
+| `RATE_LIMIT_STAFF_AUTH_MAX`, `RATE_LIMIT_STAFF_AUTH_WINDOW_S` | `5`, `900` | Wrong staff passwords allowed per client per window, in each service on its own; then even the right one gets `429` until the window passes. |
+| `TRUSTED_PROXY_HOPS` | `1` | Proxies in front of the service that append to `X-Forwarded-For` (on Azure, the Container Apps ingress). `0` ignores the header. The limits are counted in memory, so they reset when the app scales to zero; a nonsense value in any of these settings stops the start. |
 | `SAMPLE_ANIMALS` | `1` | _(animals)_ When the database has no animals, add six sample animals at startup (via the same service as a staff intake) so the animal pages have something to show. `0` starts empty. Never adds to a database that already has animals. |
 | `FLASK_DEBUG` | `0` | Set to `1` for the Flask reloader and tracebacks in development. |
 | `ADMIN_PASSWORD` | _(unset)_ | Shared password for the staff-only endpoints. **Unset disables them**, returning 503 rather than allowing access. |

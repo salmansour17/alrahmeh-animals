@@ -14,6 +14,8 @@ import os
 from dataclasses import dataclass, field
 from urllib.parse import urlsplit
 
+from hardening import HardeningSettings
+
 logger = logging.getLogger(__name__)
 
 # Binding to 0.0.0.0 rather than localhost is a deployment requirement: inside
@@ -49,6 +51,9 @@ class Config:
     # "dev" when running from a checkout. Reported by GET /health.
     version: str = DEFAULT_VERSION
     service: str = SERVICE
+    # Rate limits and the trusted proxy count (hardening.py); the defaults
+    # unless the environment says otherwise.
+    hardening: HardeningSettings = HardeningSettings()
 
 
 def load_config() -> Config:
@@ -63,6 +68,8 @@ def load_config() -> Config:
         admin_password=os.environ.get("ADMIN_PASSWORD") or None,
         cors_origins=_read_cors_origins(),
         version=os.environ.get("GIT_SHA", "").strip() or DEFAULT_VERSION,
+        # Raises on a nonsense value, which stops the start (fail fast).
+        hardening=HardeningSettings.from_environment(),
         sample_animals=os.environ.get("SAMPLE_ANIMALS", "1").strip() != "0",
     )
 

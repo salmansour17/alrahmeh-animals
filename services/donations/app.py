@@ -30,7 +30,9 @@ from donations.payments import StripeGateway
 from donations.repository import SqlDonationRepository
 from donations.routes import create_donations_blueprint
 from donations.service import AnimalDirectory, AnimalNames, DonationService, PaymentGateway
+from hardening import PUBLIC_FORM, Hardening, install_hardening, request_context
 from security import require_admin
+from security_events import SecurityEvents
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger(__name__)
@@ -70,6 +72,13 @@ class IdConverter(IntegerConverter):
         super().__init__(url_map, *args, **kwargs)
 
 
+# Endpoints with a rate limit, by Flask endpoint name (hardening.py). Only
+# the public form here: starting a card donation. Staff authentication has its own
+# limit in security.py; /health is never limited, because the platform and
+# the website's cold-start screen poll it.
+RATE_LIMITED = {"donations.start_checkout": PUBLIC_FORM}
+
+
 def create_app(
     config: Config | None = None,
     animals: AnimalDirectory | None = None,
@@ -97,12 +106,16 @@ def create_app(
     # this one line.
     database = database or Database.from_url(config.database_url, appname=config.service)
     app.config["DATABASE"] = database
+    # Security events (security_events.py): one JSON line each, from a
+    # fixed list of fields. The donation rules emit two of them.
+    events = SecurityEvents(config.service, context=request_context)
 
     donation_service = DonationService(
         SqlDonationRepository(database),
         animals=animals or HttpAnimalDirectory(config.animals_url, config.animals_timeout_s),
         today=amman_today,
         gateway=_payment_gateway(config),
+        events=events,
         # The staff list's names: the same animals service, a separate client,
         # and a cache in front of it. The earmark check above never sees it.
         names=animal_names
@@ -122,6 +135,7 @@ def create_app(
 
     app.register_error_handler(HTTPException, _json_http_error)
     _register_meta_routes(app)
+    install_hardening(app, Hardening(config.hardening, events), RATE_LIMITED)
     _share_one_connection_per_request(app, database)
     enable_cors(app, config.cors_origins)
     return app

@@ -197,6 +197,7 @@ def check_client_call(
 ENV_READS = [
     re.compile(r'os\.environ\.get\("([A-Z_][A-Z0-9_]*)"'),
     re.compile(r'_read_(?:optional|timeout|int)\("([A-Z_][A-Z0-9_]*)"'),
+    re.compile(r'_env_int\("([A-Z_][A-Z0-9_]*)"'),
 ]
 SHELL_READS = re.compile(r"\$\{([A-Z_][A-Z0-9_]*)")
 

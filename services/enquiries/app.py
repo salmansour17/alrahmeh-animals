@@ -24,7 +24,9 @@ from db import Database
 from enquiries.repository import SqlEnquiryRepository
 from enquiries.routes import create_enquiries_blueprint
 from enquiries.service import EnquiryService
+from hardening import PUBLIC_FORM, Hardening, install_hardening, request_context
 from security import require_admin
+from security_events import SecurityEvents
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger(__name__)
@@ -46,6 +48,13 @@ class IdConverter(IntegerConverter):
         super().__init__(url_map, *args, **kwargs)
 
 
+# Endpoints with a rate limit, by Flask endpoint name (hardening.py). Only
+# the public form here: the contact and volunteer form. Staff authentication has its own
+# limit in security.py; /health is never limited, because the platform and
+# the website's cold-start screen poll it.
+RATE_LIMITED = {"enquiries.send_enquiry": PUBLIC_FORM}
+
+
 def create_app(config: Config | None = None, database: Database | None = None) -> Flask:
     """Build the service from a Config (and optionally a Database), so tests can
     point it at their own database without touching os.environ. Building the
@@ -64,6 +73,8 @@ def create_app(config: Config | None = None, database: Database | None = None) -
 
     app.register_error_handler(HTTPException, _json_http_error)
     _register_meta_routes(app)
+    events = SecurityEvents(config.service, context=request_context)
+    install_hardening(app, Hardening(config.hardening, events), RATE_LIMITED)
     _share_one_connection_per_request(app, database)
     enable_cors(app, config.cors_origins)
     return app

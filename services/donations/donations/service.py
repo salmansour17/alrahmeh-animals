@@ -31,6 +31,7 @@ from donations.models import (
     ReversalRequest,
     ValidationError,
 )
+from security_events import SecurityEvent, SecurityEvents
 
 logger = logging.getLogger(__name__)
 
@@ -144,6 +145,7 @@ class DonationService:
         today: Callable[[], date],
         gateway: PaymentGateway | None = None,
         names: AnimalNames | None = None,
+        events: SecurityEvents | None = None,
     ) -> None:
         # No default for `today`: whoever builds the service must say which
         # calendar "today" is in, because a UTC server and staff in Amman
@@ -156,6 +158,9 @@ class DonationService:
         # None means the staff list shows ids only, as if the animals service
         # never answered.
         self._names = names
+        # Security events (security_events.py); None writes none, for tests
+        # that are not about them.
+        self._events = events
 
     def record(self, payload: Any) -> Donation:
         """Record a donation staff received in cash or by bank transfer. Card
@@ -201,11 +206,18 @@ class DonationService:
                 "Checkout earmarked for animal %d went ahead unverified: animals service unavailable",
                 request.earmarked_animal_id,
             )
+            self._emit(SecurityEvent.EARMARK_NOT_VERIFIED, reason="checkout", animal_id=request.earmarked_animal_id)
         return gateway.create_checkout(request)
 
     def handle_webhook(self, payload: bytes, signature: str | None) -> WebhookOutcome:
         """Verify a provider message and record the payment it confirms."""
-        confirmed = self._require_gateway().verify_event(payload, signature)
+        try:
+            confirmed = self._require_gateway().verify_event(payload, signature)
+        except InvalidWebhookSignature:
+            # Someone other than the provider calling, or a misconfigured
+            # secret: either way worth an alert. The body is never logged.
+            self._emit(SecurityEvent.WEBHOOK_SIGNATURE_INVALID, status=400, reason="bad_signature")
+            raise
         if confirmed is None:
             return WebhookOutcome.IGNORED
         return self.confirm_payment(confirmed)
@@ -243,6 +255,7 @@ class DonationService:
                     session_id,
                     animal_id,
                 )
+                self._emit(SecurityEvent.EARMARK_NOT_VERIFIED, reason="payment", animal_id=animal_id)
 
         recorded = self._repository.add_paid(
             NewDonation(
@@ -288,6 +301,10 @@ class DonationService:
     def _check_earmark(self, animal_id: int | None) -> None:
         if animal_id is not None and not self._animals.exists(animal_id):
             raise UnknownEarmarkedAnimal(animal_id)
+
+    def _emit(self, event: SecurityEvent, **fields: int | str) -> None:
+        if self._events is not None:
+            self._events.emit(event, **fields)
 
     def _require_gateway(self) -> PaymentGateway:
         if self._gateway is None:

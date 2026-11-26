@@ -48,6 +48,7 @@ paths:
                 properties:
                   tables: {type: array, items: {type: string}}
         "401": {$ref: "#/components/responses/Unauthorised"}
+        "429": {$ref: "#/components/responses/TooManyRequests"}
         "503": {$ref: "#/components/responses/StaffDisabled"}
 
   /api/enquiries:
@@ -83,6 +84,7 @@ paths:
                 properties:
                   status: {type: string, enum: [received]}
         "400": {$ref: "#/components/responses/BadRequest"}
+        "429": {$ref: "#/components/responses/TooManyRequests"}
         "415":
           description: Send application/json
           content:
@@ -117,6 +119,7 @@ paths:
                   enquiries: {type: array, items: {$ref: "#/components/schemas/Enquiry"}}
         "400": {$ref: "#/components/responses/BadRequest"}
         "401": {$ref: "#/components/responses/Unauthorised"}
+        "429": {$ref: "#/components/responses/TooManyRequests"}
         "503": {$ref: "#/components/responses/StaffDisabled"}
 
   /api/enquiries/{enquiry_id}/handled:
@@ -136,6 +139,7 @@ paths:
             application/json:
               schema: {$ref: "#/components/schemas/Enquiry"}
         "401": {$ref: "#/components/responses/Unauthorised"}
+        "429": {$ref: "#/components/responses/TooManyRequests"}
         "404":
           description: No such message
           content:
@@ -181,6 +185,19 @@ components:
         received_at: {type: string, description: "YYYY-MM-DD HH:MM:SS, UTC"}
 
   responses:
+    TooManyRequests:
+      description: >
+        Rate limited: too many submissions of a public form, or too many wrong
+        staff passwords, from this client. Retry after the number of seconds
+        in Retry-After. The counts are kept in memory by this service and
+        reset when it scales to zero.
+      headers:
+        Retry-After:
+          description: Whole seconds to wait before trying again, at least 1
+          schema: {type: integer, minimum: 1}
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/Error"}
     BadRequest:
       description: The request is not valid; `detail` says why
       content:

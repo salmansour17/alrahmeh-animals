@@ -18,7 +18,10 @@ import logging
 from collections.abc import Callable
 from functools import wraps
 
-from flask import current_app, jsonify, request
+from flask import current_app, g, jsonify, request
+
+from hardening import STAFF_AUTH, Hardening
+from security_events import SecurityEvent
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +38,9 @@ def require_admin(view: Callable) -> Callable:
 
     @wraps(view)
     def wrapper(*args, **kwargs):
+        # Every answer from here on, 401 and 429 included, is a staff answer:
+        # hardening.py marks it no-store so no cache keeps it.
+        g.staff_route = True
         expected = current_app.config["APP_CONFIG"].admin_password
 
         if not expected:
@@ -54,21 +60,39 @@ def require_admin(view: Callable) -> Callable:
                 503,
             )
 
+        # Guessing is limited per client and per service (hardening.py). The
+        # limit is checked before the password, so a client that is locked
+        # out cannot keep guessing; only wrong passwords count towards it.
+        hardening: Hardening = current_app.extensions["hardening"]
+        limiter, client = hardening.limiters[STAFF_AUTH], hardening.client()
+        decision = limiter.check(client)
+        if not decision.allowed:
+            return hardening.refuse(STAFF_AUTH, decision)
+
         credentials = request.authorization
         supplied = credentials.password if credentials else None
-        if not supplied or not _matches(supplied, expected):
-            logger.warning("Refused %s %s: bad admin password", request.method, request.path)
-            # Deliberately no WWW-Authenticate header. That header makes a
-            # browser show its own login box and then remember the password
-            # and attach it to every later request to this site by itself,
-            # including requests another website triggers: a cross-site
-            # request forgery opening. The staff portal adds the password
-            # itself, from page memory, so it never needs the browser's help.
-            return jsonify(error="unauthorised"), 401
+        if not supplied:
+            # No password at all is not a guess, so it does not count.
+            return _unauthorised()
+        if not _matches(supplied, expected):
+            limiter.record(client)
+            hardening.events.emit(SecurityEvent.STAFF_AUTH_FAILED, status=401, reason="wrong_password")
+            return _unauthorised()
 
         return view(*args, **kwargs)
 
     return wrapper
+
+
+def _unauthorised():
+    logger.warning("Refused %s %s: missing or wrong admin password", request.method, request.path)
+    # Deliberately no WWW-Authenticate header. That header makes a browser
+    # show its own login box and then remember the password and attach it to
+    # every later request to this site by itself, including requests another
+    # website triggers: a cross-site request forgery opening. The staff
+    # portal adds the password itself, from page memory, so it never needs
+    # the browser's help.
+    return jsonify(error="unauthorised"), 401
 
 
 def _matches(supplied: str, expected: str) -> bool:
