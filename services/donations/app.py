@@ -16,7 +16,7 @@ from __future__ import annotations
 import logging
 from datetime import date, datetime, timedelta, timezone
 
-from flask import Flask, jsonify
+from flask import Flask, g, jsonify
 from werkzeug.exceptions import HTTPException
 from werkzeug.routing import IntegerConverter
 
@@ -111,6 +111,7 @@ def create_app(
 
     app.register_error_handler(HTTPException, _json_http_error)
     _register_meta_routes(app)
+    _share_one_connection_per_request(app, database)
     enable_cors(app, config.cors_origins)
     return app
 
@@ -199,3 +200,20 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+
+def _share_one_connection_per_request(app: Flask, database: Database) -> None:
+    """Each request opens at most one database connection, shared by all its
+    units of work and closed when the request ends, error or not (db.py,
+    Database.begin_request, says why). teardown_request runs even when the
+    view raised, so no connection outlives its request."""
+
+    @app.before_request
+    def _begin() -> None:
+        g.database_request = database.begin_request()
+
+    @app.teardown_request
+    def _end(_error: BaseException | None) -> None:
+        token = g.pop("database_request", None)
+        if token is not None:
+            database.end_request(token)
