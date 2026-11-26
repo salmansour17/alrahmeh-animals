@@ -10,7 +10,8 @@ authenticated by its signature instead.
 
 There is no PUT or DELETE route. Because GET /<id> exists, Flask answers those
 methods with 405 Method Not Allowed, which states the rule: a ledger entry
-cannot be changed.
+cannot be changed. A mistake is corrected by POST /<id>/reversal, which adds a
+new row that cancels the gift.
 """
 
 from __future__ import annotations
@@ -25,10 +26,12 @@ from donations.models import (
     format_jod,
 )
 from donations.service import (
+    AlreadyReversed,
     AnimalsUnavailable,
     DonationNotFound,
     DonationService,
     InvalidWebhookSignature,
+    NotReversible,
     PaymentProviderError,
     PaymentsUnavailable,
 )
@@ -85,6 +88,12 @@ def create_donations_blueprint(service: DonationService, offline: OfflineMethods
     def get_donation(donation_id: int):
         return jsonify(_donation(service.get(donation_id)))
 
+    @bp.post("/<int:donation_id>/reversal")
+    @require_admin
+    def reverse_donation(donation_id: int):
+        reversal = service.reverse(donation_id, request.get_json(silent=True))
+        return jsonify(_donation(reversal)), 201
+
     # --- errors --------------------------------------------------------------
 
     @bp.errorhandler(ValidationError)
@@ -94,6 +103,16 @@ def create_donations_blueprint(service: DonationService, offline: OfflineMethods
     @bp.errorhandler(DonationNotFound)
     def not_found(error: DonationNotFound):
         return jsonify(error="not_found", detail=str(error)), 404
+
+    # 409, as for the animals service's state conflicts: the request is well
+    # formed, but the ledger's current state does not allow it.
+    @bp.errorhandler(AlreadyReversed)
+    def already_reversed(error: AlreadyReversed):
+        return jsonify(error="already_reversed", detail=str(error)), 409
+
+    @bp.errorhandler(NotReversible)
+    def not_reversible(error: NotReversible):
+        return jsonify(error="not_reversible", detail=str(error)), 409
 
     @bp.errorhandler(InvalidWebhookSignature)
     def bad_signature(error: InvalidWebhookSignature):
@@ -131,6 +150,11 @@ def _donation(donation: Donation) -> dict:
         "purpose": donation.purpose.value,
         "earmarked_animal_id": donation.earmarked_animal_id,
         "received_on": donation.received_on.isoformat(),
+        "kind": donation.kind.value,
+        "reverses_donation_id": donation.reverses_donation_id,
+        "reversal_reason": donation.reversal_reason,
+        "reversed_by_id": donation.reversed_by_id,
+        "reversible": donation.reversible,
     }
 
 

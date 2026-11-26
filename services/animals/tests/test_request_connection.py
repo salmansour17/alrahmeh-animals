@@ -216,6 +216,20 @@ def test_two_requests_on_two_threads_never_share_a_connection(db, logins):
     assert all(raw.commits == 2 and raw.closed for raw in logins.opened)
 
 
+def test_app_py_defines_everything_before_its_main_block():
+    # Run as a script (python app.py), main() starts at the __main__ block, so
+    # anything defined below it does not exist yet. The connection helper was
+    # once added there: gunicorn and the tests import the whole file first and
+    # never noticed, but local development crashed on start.
+    import ast
+    from pathlib import Path
+
+    tree = ast.parse((Path(__file__).resolve().parents[1] / "app.py").read_text(encoding="utf-8"))
+    last = tree.body[-1]
+    assert isinstance(last, ast.If)
+    assert ast.unparse(last.test) == "__name__ == '__main__'"
+
+
 # --- On a real request, against the test SQL Server ------------------------
 
 

@@ -139,6 +139,23 @@ def _register_meta_routes(app: Flask) -> None:
         return jsonify(tables=database.table_names())
 
 
+def _share_one_connection_per_request(app: Flask, database: Database) -> None:
+    """Each request opens at most one database connection, shared by all its
+    units of work and closed when the request ends, error or not (db.py,
+    Database.begin_request, says why). teardown_request runs even when the
+    view raised, so no connection outlives its request."""
+
+    @app.before_request
+    def _begin() -> None:
+        g.database_request = database.begin_request()
+
+    @app.teardown_request
+    def _end(_error: BaseException | None) -> None:
+        token = g.pop("database_request", None)
+        if token is not None:
+            database.end_request(token)
+
+
 def main() -> None:
     """Development start: the same steps as the container, in one process."""
     from migrate import apply_migrations
@@ -156,20 +173,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
-
-def _share_one_connection_per_request(app: Flask, database: Database) -> None:
-    """Each request opens at most one database connection, shared by all its
-    units of work and closed when the request ends, error or not (db.py,
-    Database.begin_request, says why). teardown_request runs even when the
-    view raised, so no connection outlives its request."""
-
-    @app.before_request
-    def _begin() -> None:
-        g.database_request = database.begin_request()
-
-    @app.teardown_request
-    def _end(_error: BaseException | None) -> None:
-        token = g.pop("database_request", None)
-        if token is not None:
-            database.end_request(token)

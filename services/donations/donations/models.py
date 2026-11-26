@@ -13,7 +13,7 @@ them would make the ledger depend on another service, which ADR-2 and ADR-6 forb
 from __future__ import annotations
 
 import re
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
@@ -37,6 +37,8 @@ _MAX_JOD_DIGITS = 5
 _AMOUNT_JOD = re.compile(rf"[0-9]{{1,{_MAX_JOD_DIGITS}}}(\.[0-9]{{1,{JOD_DECIMAL_PLACES}}})?")
 
 DONOR_NAME_MAX = 120
+# Matches reversal_reason NVARCHAR(500) in 003_ledger_reversals.sql.
+REVERSAL_REASON_MAX = 500
 
 # Smallest card donation. The test-mode Stripe account settles in EUR and
 # refuses any charge worth less than EUR 0.50 (confirmed 2026-10-01: "must
@@ -56,18 +58,56 @@ class DonationPurpose(StrEnum):
     GENERAL = "general"
 
 
+class DonationKind(StrEnum):
+    """What a ledger row is. Values match the CHECK constraint on
+    donations.kind (003_ledger_reversals.sql); a test compares the two.
+
+    A reversal cancels one gift in full. It is a row of its own because the
+    ledger is append-only: a mistake is corrected by adding, never by editing.
+    """
+
+    GIFT = "gift"
+    REVERSAL = "reversal"
+
+
+class ReversalOutcome(StrEnum):
+    """What the repository did when asked to reverse a gift. A result, not an
+    exception, so the repository never needs the service's error types; the
+    service decides what each outcome means for the caller."""
+
+    REVERSED = "reversed"
+    NOT_FOUND = "not_found"
+    NOT_A_GIFT = "not_a_gift"
+    ALREADY_REVERSED = "already_reversed"
+
+
 class ValidationError(ValueError):
     """A request body or query parameter that cannot become a domain object."""
 
 
 @dataclass(frozen=True)
 class Donation:
+    """One ledger row, as the ledger holds it: a gift, or a reversal of one.
+
+    reversed_by_id is not stored on the gift (the gift is never edited); it is
+    the id of the reversal that points at it, found when the row is read.
+    """
+
     id: int
     donor_name: str | None
     amount_fils: int
     purpose: DonationPurpose
     earmarked_animal_id: int | None
     received_on: date
+    kind: DonationKind = DonationKind.GIFT
+    reverses_donation_id: int | None = None
+    reversal_reason: str | None = None
+    reversed_by_id: int | None = None
+
+    @property
+    def reversible(self) -> bool:
+        """Only a gift that nothing has reversed yet can be reversed."""
+        return self.kind is DonationKind.GIFT and self.reversed_by_id is None
 
 
 @dataclass(frozen=True)
@@ -95,6 +135,23 @@ class NewDonation:
             earmarked_animal_id=_optional_positive_int(fields, "earmarked_animal_id"),
             received_on=today if received is None else _past_date(fields, "received_on", today),
         )
+
+
+@dataclass(frozen=True)
+class ReversalRequest:
+    """Staff asking to reverse a gift. The reason is the only input: the
+    amount, purpose and earmark are copied from the gift by the database, so
+    a request can never reverse a different sum from the one given."""
+
+    reason: str
+
+    @classmethod
+    def from_payload(cls, payload: Any) -> ReversalRequest:
+        fields = _fields(payload, required={"reason"}, optional=set())
+        reason = _optional_text(fields, "reason", REVERSAL_REASON_MAX)
+        if reason is None:
+            raise ValidationError("reason must say why the donation is being reversed")
+        return cls(reason=reason)
 
 
 @dataclass(frozen=True)
@@ -188,6 +245,39 @@ class ImpactSummary:
     donation_count: int
     totals_by_purpose_fils: dict[DonationPurpose, int]
     animals_helped: int
+
+
+@dataclass(frozen=True)
+class LedgerSum:
+    """One group of ledger rows as the database adds them up: every row of one
+    purpose and one kind."""
+
+    purpose: DonationPurpose
+    kind: DonationKind
+    total_fils: int
+    count: int
+
+
+def net_impact(sums: Iterable[LedgerSum], animals_helped: int) -> ImpactSummary:
+    """The homepage figures from the ledger's sums: gifts minus reversals.
+
+    The one place that applies a reversal's sign. Amounts are stored positive
+    on both kinds; a reversal cancels its gift's whole amount and is never
+    counted as a gift itself, so the donation count is gifts that still
+    stand. animals_helped is counted by the database, over those same gifts.
+    """
+    by_purpose = dict.fromkeys(DonationPurpose, 0)
+    count = 0
+    for row in sums:
+        sign = 1 if row.kind is DonationKind.GIFT else -1
+        by_purpose[row.purpose] += sign * row.total_fils
+        count += sign * row.count
+    return ImpactSummary(
+        total_raised_fils=sum(by_purpose.values()),
+        donation_count=count,
+        totals_by_purpose_fils=by_purpose,
+        animals_helped=animals_helped,
+    )
 
 
 @dataclass(frozen=True)

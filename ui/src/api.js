@@ -83,6 +83,7 @@ export function staffApi(password) {
     markHandled: (enquiryId) => send(`/api/enquiries/${id(enquiryId)}/handled`),
     donations: () => get("/api/donations?limit=20"),
     recordDonation: (donation) => send("/api/donations", donation),
+    reverseDonation: (donationId, reason) => send(`/api/donations/${id(donationId)}/reversal`, { reason }),
     offlineAdoptions: () => get("/api/animals/offline-adoptions"),
     recordOfflineAdoption: (entry) => send("/api/animals/offline-adoptions", entry),
     admit: (animal) => send("/api/animals", animal),

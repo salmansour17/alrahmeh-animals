@@ -108,21 +108,6 @@ def _register_meta_routes(app: Flask) -> None:
         return jsonify(tables=database.table_names())
 
 
-def main() -> None:
-    from migrate import apply_migrations
-
-    config = load_config()
-    database = Database.from_url(config.database_url, appname=config.service)
-    apply_migrations(database)
-    app = create_app(config, database)
-    logger.info("Enquiries service on http://%s:%d, database %s", config.host, config.port, database.name)
-    app.run(host=config.host, port=config.port, debug=config.debug)
-
-
-if __name__ == "__main__":
-    main()
-
-
 def _share_one_connection_per_request(app: Flask, database: Database) -> None:
     """Each request opens at most one database connection, shared by all its
     units of work and closed when the request ends, error or not (db.py,
@@ -138,3 +123,18 @@ def _share_one_connection_per_request(app: Flask, database: Database) -> None:
         token = g.pop("database_request", None)
         if token is not None:
             database.end_request(token)
+
+
+def main() -> None:
+    from migrate import apply_migrations
+
+    config = load_config()
+    database = Database.from_url(config.database_url, appname=config.service)
+    apply_migrations(database)
+    app = create_app(config, database)
+    logger.info("Enquiries service on http://%s:%d, database %s", config.host, config.port, database.name)
+    app.run(host=config.host, port=config.port, debug=config.debug)
+
+
+if __name__ == "__main__":
+    main()

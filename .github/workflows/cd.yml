@@ -245,3 +245,15 @@ jobs:
             echo "$service healthy: $body"
           done
           echo "Website: $(jq -r '.website_url.value' "$RUNNER_TEMP/outputs.json")"
+
+      # Copies each service's start-up log, including the migration runner's
+      # "Applied migration ..." lines, into this run's log for good: without
+      # Log Analytics, Azure drops a container's output when it scales to zero.
+      # always(): the log matters most when an earlier step failed, and this
+      # step cannot hide that failure (the job keeps the failed step's
+      # status). The script itself always exits 0 and only warns.
+      - name: Show each service's start-up log
+        if: always()
+        env:
+          PREFIX: ${{ vars.PREFIX }}
+        run: bash .github/scripts/show-startup-logs.sh "$RUNNER_TEMP/outputs.json"
