@@ -5,7 +5,7 @@
 # tag cannot change what we build on. It is the digest of the multi-platform
 # index, so the same line builds on amd64 (Azure) and arm64 (some laptops).
 # "slim" leaves out compilers and docs. Dependabot proposes updates to both.
-FROM python:3.13.18-slim-bookworm@sha256:f0fa218d5b06f9b9235024fa061cde2cb141f726de52134471053d2d9b5324a3
+FROM python:3.15.1-slim-bookworm@sha256:575f8bc12ec26542e0678bc6b60e385218248019d433157ec327264a78c3a853
 
 # No .pyc files in the image, log lines reach `docker logs` straight away, and
 # pip keeps no download cache in the layer.
