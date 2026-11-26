@@ -306,7 +306,15 @@ function OfflineTab({ client }) {
         </form>
         <h3>Latest donations</h3>
         <Listing state={donations} empty="None yet." items={(data) => data.donations}>
-          {(d) => <DonationLine key={d.id} donation={d} client={client} onReversed={refresh} />}
+          {(d) => (
+            <DonationLine
+              key={d.id}
+              donation={d}
+              namesAvailable={donations.data.animal_names === "ok"}
+              client={client}
+              onReversed={refresh}
+            />
+          )}
         </Listing>
       </section>
 
@@ -631,7 +639,7 @@ function Listing({ state, empty, items, children }) {
 // reversal links to the gift it cancels, and neither can be reversed again.
 // Every value is rendered as text by React, never as HTML; names and reasons
 // typed by people get dir="auto" so Arabic reads right to left.
-function DonationLine({ donation: d, client, onReversed }) {
+function DonationLine({ donation: d, namesAvailable, client, onReversed }) {
   const [confirming, setConfirming] = useState(false);
   const reverse = useSubmit(({ reason }) => client.reverseDonation(d.id, reason));
   const reasonField = useRef(null);
@@ -663,6 +671,12 @@ function DonationLine({ donation: d, client, onReversed }) {
         <>
           {" · "}
           <bdi dir="auto">{d.donor_name}</bdi>
+        </>
+      )}
+      {d.earmarked_animal_id !== null && (
+        <>
+          {" · for "}
+          <EarmarkedAnimal id={d.earmarked_animal_id} name={d.earmarked_animal_name} available={namesAvailable} />
         </>
       )}
       {d.kind === "reversal" && (
@@ -717,6 +731,19 @@ function DonationLine({ donation: d, client, onReversed }) {
         </form>
       )}
     </li>
+  );
+}
+
+// The donations service asks the animals service for the names, in one request
+// per page (cached for a few minutes). When it could not answer, the id is shown
+// and says so; an id it answered for but does not know shows just the id.
+function EarmarkedAnimal({ id, name, available }) {
+  if (name) return <bdi dir="auto">{name}</bdi>;
+  return (
+    <span className="muted">
+      #{id}
+      {!available && " (name unavailable)"}
+    </span>
   );
 }
 
