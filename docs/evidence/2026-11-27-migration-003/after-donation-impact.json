@@ -1,0 +1,22 @@
+{
+    "animals_helped": 1,
+    "by_purpose": {
+        "food_fund": {
+            "amount_fils": 65000,
+            "amount_jod": "65.000"
+        },
+        "general": {
+            "amount_fils": 0,
+            "amount_jod": "0.000"
+        },
+        "medical_fund": {
+            "amount_fils": 25000,
+            "amount_jod": "25.000"
+        }
+    },
+    "donation_count": 2,
+    "total_raised": {
+        "amount_fils": 90000,
+        "amount_jod": "90.000"
+    }
+}

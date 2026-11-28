@@ -1,79 +1,57 @@
-# Evidence: migration 003 on Azure, after (to collect on 2026-11-27)
+# Evidence: migration 003 on Azure, after
 
-The "after" half of §4.6: migration `003_ledger_reversals.sql` changing the
-`donations` table that already holds the three gifts recorded on 2026-11-26.
-The "before" half is in `../2026-11-26-before-migration-003/`.
+The "after" half of §4.6: migration `003_ledger_reversals.sql` changed the
+`donations` table on Azure while it already held three gifts. The "before"
+half is in `../2026-11-26-before-migration-003/`.
 
-This file is a checklist. Nothing below has been captured yet: fill in each
-item from the live site and the Actions log, and replace this paragraph with
-the date and time you did.
+The migration ran on 2026-11-26 at 21:52 UTC, in the deploy of PR #56. The
+screenshots and the data below were captured by hand on the live site on
+2026-11-28, around 15:50 UTC.
 
-## 1. The migration log line
+## 1. The migration ran on Azure
 
-After the pull request is merged, open the CD run it starts (Actions, "CD",
-the run for the merge commit). In the `deploy to Azure` job, the last step is
-**Show each service's start-up log**. Below the collapsed groups it prints,
-for the donations service:
+[CD run 45900780857](https://github.com/salmansour17/alrahmeh-animals/actions/runs/45900780857),
+job `deploy to Azure`, step **Show each service's start-up log**:
 
 ```
 donations migrations:
-INFO migrate: Applied migration 003_ledger_reversals.sql to snsour-ieu2024-donations-db
+2026-11-26T21:52:57.681908026+00:00 stderr INFO __main__: Applied migration 003_ledger_reversals.sql to snsour-ieu2024-donations-db
 ```
 
-- [ ] CD run link: ...
-- [ ] `migration-log-line.png`: a screenshot of that line in the Actions log.
+The animals and enquiries databases are "up to date" (3 and 2 migrations):
+they had nothing new. `migration-log-line.png` is a screenshot of those lines.
 
-If the step shows a `::warning::` instead (the container started before the
-log window), expand the donations group and search for `Applied migration`;
-if it is not there either, read the log by hand while the app is awake:
+## 2. The rows already there were kept, and changed in place
 
-```powershell
-docker run --rm -v alrahmeh-azure-cli:/root/.azure mcr.microsoft.com/azure-cli:latest az containerapp logs show --subscription "Azure for Students" -g rg-snsour-ieu2024 -n snsour-ieu2024-donations --type console --tail 300 --format text
-```
+`after-migration-list.png`: the staff portal's "Latest donations" after the
+migration. The same three gifts as `before-staff-donations-list.png`
+(25.000 JOD medical fund, 65.000 JOD food fund and 255.000 JOD medical fund,
+the last two earmarked for Rocky), now numbered #1 to #3 and each reversible.
+They became `kind = gift` through the column's default, with no `UPDATE`: the
+append-only trigger from `001` was never switched off.
 
-## 2. The same rows, after the migration
+## 3. A correction on the live site
 
-Open the staff portal (https://snsourieu2024ui.z1.web.core.windows.net/staff,
-"Record offline"). The first load may take up to a minute while the apps and
-databases wake; if a message asks you to try again, wait and reload.
+`after-reversal-list.png`: the 255.000 JOD gift (#3) reversed from the staff
+portal with the reason "recorded twice by mistake". A new row, #4, is
+labelled **Reversal** of #3 and shows the reason; #3 is struck through and
+labelled **Reversed** by #4; neither can be reversed again. Nothing was edited
+or deleted: the correction is a new row.
 
-- [ ] `after-migration-list.png`: "Latest donations" showing the same three
-  gifts as `before-staff-donations-list.png` (25.000, 65.000, 255.000 JOD),
-  now numbered (#1, #2, ...) and each with a **Reverse** button. This shows
-  the existing rows were kept and became gifts, with no edit to any of them.
+## 4. The figures follow
 
-## 3. A reversal on the live site
+`after-reversal-homepage-counters.png` and `after-donation-impact.json`
+(`GET /api/donations/impact`):
 
-Reverse the 255.000 JOD gift (the "recorded by mistake" case):
-
-1. Click **Reverse** on that row.
-2. Type a reason, for example `Recorded twice by mistake`.
-3. Click **Reverse donation**.
-
-- [ ] `after-reversal-list.png`: the new row labelled **Reversal** of #N with
-  the reason, and the 255.000 JOD gift struck through and labelled
-  **Reversed** by #M. Neither has a Reverse button.
-- [ ] `after-reversal-homepage-counters.png`: the homepage counters, now
-  **90.000 JOD** raised instead of 345.000 (and still 1 animal helped, by the
-  earmarked 25.000 JOD gift).
-- [ ] `after-donation-impact.json`: open
-  https://snsour-ieu2024-donations.politewater-5e265943.germanywestcentral.azurecontainerapps.io/api/donations/impact
-  and save the page. Expected: `"donation_count": 2`, total `"90.000"`.
-
-## 4. Optional: the rules, live
-
-- [ ] `reverse-twice-refused.png`: try reversing the same gift again from
-  another tab that still shows the Reverse button. Expected message: "donation
-  N has already been reversed" (409).
-
-## What this shows
-
-| | Before (2026-11-26) | After |
+| | Before (2026-11-26) | After (2026-11-28) |
 |---|---|---|
 | Migrations on the donations database | 2 | 3 |
 | Rows in `donations` | 3 gifts | the same 3, now `kind = gift`, plus 1 reversal |
 | Total raised on the homepage | 345.000 JOD | 90.000 JOD |
+| Medical fund | 280.000 JOD | 25.000 JOD |
+| Food fund | 65.000 JOD | 65.000 JOD |
 | Gifts counted | 3 | 2 |
+| Animals helped by an earmarked gift | 1 (Rocky) | 1 (Rocky, through the 65.000 JOD gift that stands) |
 
 A reversal is a ledger entry only: it does not refund a card payment at the
 payment provider.
