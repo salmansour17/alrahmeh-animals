@@ -1,21 +1,24 @@
 /* Al-Rahmeh: warm blush and burnt orange (designs 1 and 2), the peach-to-sage
    hero, notched cards and green tags (design 3), and a blue logo. */
 
-/* Nunito, self-hosted: only the two latin woff2 files are bundled, and no
-   request ever goes to a font service. */
+/* Nunito, self-hosted: the two latin woff2 files the headings use live in
+   src/assets/fonts with their licence (OFL.txt), and Vite bundles them like
+   the logo, so no request ever goes to a font service and the
+   Content-Security-Policy stays font-src 'self'. (They were once read from
+   node_modules by a path that did not resolve, so production never had them.) */
 @font-face {
   font-family: "Nunito";
   font-style: normal;
   font-weight: 700;
   font-display: swap;
-  src: url("../../node_modules/@fontsource/nunito/files/nunito-latin-700-normal.woff2") format("woff2");
+  src: url("./assets/fonts/nunito-latin-700-normal.woff2") format("woff2");
 }
 @font-face {
   font-family: "Nunito";
   font-style: normal;
   font-weight: 800;
   font-display: swap;
-  src: url("../../node_modules/@fontsource/nunito/files/nunito-latin-800-normal.woff2") format("woff2");
+  src: url("./assets/fonts/nunito-latin-800-normal.woff2") format("woff2");
 }
 
 :root {

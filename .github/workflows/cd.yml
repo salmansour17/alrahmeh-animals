@@ -228,6 +228,13 @@ jobs:
               --container-name "\$web" --name "$file" --file "ui/dist/$file" --overwrite \
               --content-cache-control "no-cache" --output none
           done
+          # The heading font, with its type stated: the upload above guesses
+          # types from the file name, and .woff2 is not always known.
+          for font in ui/dist/assets/*.woff2; do
+            az storage blob upload --account-name "$UI_STORAGE" --auth-mode key \
+              --container-name "\$web" --name "assets/$(basename "$font")" --file "$font" --overwrite \
+              --content-type font/woff2 --content-cache-control "public, max-age=31536000, immutable" --output none
+          done
 
       # The first request after idle may wake a container and a paused
       # database, which can take about a minute, so each service gets up to
