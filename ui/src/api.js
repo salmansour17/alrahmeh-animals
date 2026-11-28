@@ -1,54 +1,57 @@
 // The only file that talks to the backend. Pages call these functions and
-// never use fetch directly, so error handling lives in exactly one place.
-import { useCallback, useEffect, useState } from "react";
+// never use fetch directly, so error handling, and waking a service that has
+// scaled to zero (net/client.js), live in exactly one place.
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { createClient } from "./net/client.js";
+import { ApiError, Cancelled } from "./net/errors.js";
 
-export class ApiError extends Error {
-  constructor(status, code, message) {
-    super(message);
-    this.status = status; // 0 means the server could not be reached at all
-    this.code = code;
-  }
-}
+export { ApiError };
+
+// The one client for the whole site, so every page shares one wake loop per
+// service and one banner (WakeBanner.jsx).
+export const client = createClient({ fetch: (...args) => window.fetch(...args) });
 
 // Each API path belongs to exactly one service (ADR-6). The addresses come from
 // public/config.js, which the deployment overwrites; an empty address means
 // this same origin, which is how local development works through Vite's proxy.
 const config = window.ALRAHMEH_CONFIG ?? {};
 
-function serviceUrl(path) {
-  if (path.startsWith("/api/donations")) return (config.donationsUrl ?? "") + path;
-  if (path.startsWith("/api/enquiries")) return (config.enquiriesUrl ?? "") + path;
+// The address of the service that owns a path; "" means this same site.
+function serviceOrigin(path) {
+  if (path.startsWith("/api/donations")) return config.donationsUrl ?? "";
+  if (path.startsWith("/api/enquiries")) return config.enquiriesUrl ?? "";
   // /api/animals and /api/requests both belong to the animals service.
-  return (config.animalsUrl ?? "") + path;
+  return config.animalsUrl ?? "";
 }
+
+const serviceUrl = (path) => serviceOrigin(path) + path;
 
 // For URLs the services hand back for the browser to load itself, such as an
 // animal's photo_url ("/api/animals/3/photo?v=..."): same rule as API calls.
 export const assetUrl = (path) => (path && path.startsWith("/api/") ? serviceUrl(path) : path);
 
-async function request(path, options = {}, extraHeaders = {}) {
+// A GET may be tried again while a service wakes; anything else is sent once
+// (net/client.js). `unconfirmed` is what to say if a send's outcome is unknown.
+function request(path, options = {}, extraHeaders = {}, { unconfirmed } = {}) {
   const headers = { Accept: "application/json", ...extraHeaders };
   if (options.body && !headers["Content-Type"]) headers["Content-Type"] = "application/json";
-
-  let response;
-  try {
-    response = await fetch(serviceUrl(path), { ...options, headers });
-  } catch {
-    throw new ApiError(0, "network_error", "Could not reach the server. Please try again.");
-  }
-  const body = await response.json().catch(() => null);
-  if (!response.ok) {
-    throw new ApiError(
-      response.status,
-      body?.error ?? "error",
-      body?.detail ?? `Something went wrong (${response.status}).`,
-    );
-  }
-  return body;
+  const method = (options.method ?? "GET").toUpperCase();
+  return client.send({
+    origin: serviceOrigin(path),
+    url: serviceUrl(path),
+    init: { ...options, headers },
+    idempotent: method === "GET",
+    unconfirmed,
+  });
 }
 
-const post = (path, data, headers) =>
-  request(path, { method: "POST", body: JSON.stringify(data ?? {}) }, headers);
+const post = (path, data, headers, outcome) =>
+  request(path, { method: "POST", body: JSON.stringify(data ?? {}) }, headers, outcome);
+
+// For staff money records: where to look before sending again.
+const CHECK_THE_LIST = {
+  unconfirmed: "We could not confirm that went through. Check the latest donations list before recording it again.",
+};
 
 export const api = {
   listAnimals: (status) =>
@@ -72,7 +75,7 @@ export const api = {
 export function staffApi(password) {
   const auth = { Authorization: `Basic ${toBase64(`staff:${password}`)}` };
   const get = (path) => request(path, {}, auth);
-  const send = (path, data) => post(path, data, auth);
+  const send = (path, data, outcome) => post(path, data, auth, outcome);
   const put = (path, data) => request(path, { method: "PUT", body: JSON.stringify(data) }, auth);
   const id = encodeURIComponent;
   return {
@@ -82,8 +85,9 @@ export function staffApi(password) {
     enquiries: (handled) => get(`/api/enquiries?handled=${handled ? "true" : "false"}`),
     markHandled: (enquiryId) => send(`/api/enquiries/${id(enquiryId)}/handled`),
     donations: () => get("/api/donations?limit=20"),
-    recordDonation: (donation) => send("/api/donations", donation),
-    reverseDonation: (donationId, reason) => send(`/api/donations/${id(donationId)}/reversal`, { reason }),
+    recordDonation: (donation) => send("/api/donations", donation, CHECK_THE_LIST),
+    reverseDonation: (donationId, reason) =>
+      send(`/api/donations/${id(donationId)}/reversal`, { reason }, CHECK_THE_LIST),
     offlineAdoptions: () => get("/api/animals/offline-adoptions"),
     recordOfflineAdoption: (entry) => send("/api/animals/offline-adoptions", entry),
     admit: (animal) => send("/api/animals", animal),
@@ -112,23 +116,26 @@ function toBase64(text) {
 }
 
 // Load data for a page: { status: "loading" | "ok" | "error", data, error }.
-// A late answer for a page the visitor has already left is ignored. With
-// keepPrevious, what is on screen stays there (marked refreshing) until the
-// new data arrives, instead of flashing a loading state in between.
+// Leaving the page cancels its waiting (a service still waking keeps no loop
+// alive for nobody), and a late answer is ignored. With keepPrevious, what is
+// on screen stays there (marked refreshing) until the new data arrives. The
+// banner's "Try again" loads everything again (retryToken).
 export function useApi(load, deps, { keepPrevious = false } = {}) {
   const [state, setState] = useState({ status: "loading" });
+  const { retryToken } = useSyncExternalStore(client.waker.subscribe, client.waker.getSnapshot);
   useEffect(() => {
-    let current = true;
+    const controller = new AbortController();
     setState((previous) =>
       keepPrevious && previous.status === "ok" ? { ...previous, refreshing: true } : { status: "loading" },
     );
-    load()
-      .then((data) => current && setState({ status: "ok", data }))
-      .catch((error) => current && setState({ status: "error", error }));
-    return () => {
-      current = false;
-    };
-  }, deps);
+    client
+      .withSignal(controller.signal, load)
+      .then((data) => !controller.signal.aborted && setState({ status: "ok", data }))
+      .catch((error) => {
+        if (!controller.signal.aborted && !(error instanceof Cancelled)) setState({ status: "error", error });
+      });
+    return () => controller.abort();
+  }, [...deps, retryToken]);
   return state;
 }
 
@@ -136,10 +143,14 @@ export function useApi(load, deps, { keepPrevious = false } = {}) {
 // submit }. Shared by the donate and request forms so neither re-implements
 // double-click protection or error display. The server's own message is shown,
 // because the server is the one that decides what is valid.
+// After an error the server says may pass (error.retryable), retry() sends the
+// same data again.
 export function useSubmit(send) {
   const [state, setState] = useState({ status: "idle" });
+  const last = useRef(undefined);
   const submit = useCallback(
     async (data) => {
+      last.current = data;
       setState({ status: "sending" });
       try {
         const result = await send(data);
@@ -152,5 +163,6 @@ export function useSubmit(send) {
     },
     [send],
   );
-  return { ...state, submit, sending: state.status === "sending" };
+  const retry = useCallback(() => submit(last.current), [submit]);
+  return { ...state, submit, retry, sending: state.status === "sending" };
 }

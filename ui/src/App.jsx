@@ -7,6 +7,7 @@ import { Donate, Thanks } from "./pages/donate.jsx";
 import { Home } from "./pages/home.jsx";
 import { Shop } from "./pages/shop.jsx";
 import { StaffPortal } from "./pages/staff.jsx";
+import { WakeBanner } from "./WakeBanner.jsx";
 
 // The association's name in Arabic, exactly as the rescue writes it.
 const ARABIC_NAME = "جمعية الرحمة للرفق بالحيوان";
@@ -47,6 +48,7 @@ export default function App() {
           </NavLink>
         </nav>
       </header>
+      <WakeBanner />
       {/* Keyed by the path, so each page fades in as it arrives. */}
       <main key={pageKey} className="page">
         <Routes>

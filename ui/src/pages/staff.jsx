@@ -747,8 +747,24 @@ function EarmarkedAnimal({ id, name, available }) {
   );
 }
 
+// The server's own message. When it says trying again later may work (the
+// animals service could not check an earmark yet), a "Try again" button sends
+// the same form again.
 function Outcome({ state, done }) {
   if (state.status === "done") return <p className="success">{done}</p>;
-  if (state.status === "error") return <p className="error">{state.error.message}</p>;
+  if (state.status === "error")
+    return (
+      <p className="error">
+        {state.error.message}
+        {state.error.retryable && state.retry && (
+          <>
+            {" "}
+            <button type="button" className="button button-soft button-small" onClick={state.retry}>
+              Try again
+            </button>
+          </>
+        )}
+      </p>
+    );
   return null;
 }

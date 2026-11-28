@@ -353,6 +353,15 @@ code { background: var(--blush); padding: 0.1rem 0.45rem; border-radius: 8px; }
 .staff-item details summary { cursor: pointer; font-weight: 800; color: var(--orange-deep); }
 .staff-item details[open] { display: grid; gap: 0.5rem; }
 .staff-line { padding: 0.4rem 0; border-bottom: 1px dashed var(--taupe-deep); }
+/* The waking banner (WakeBanner.jsx): fixed over the page, so its arrival
+   moves nothing; the live region stays in place even when empty. */
+.wake-banner { position: fixed; inset-inline: 0; inset-block-end: 1rem; z-index: 50; display: flex; justify-content: center; pointer-events: none; }
+.wake-banner-box { pointer-events: auto; display: flex; align-items: center; gap: 0.6rem; margin: 0 1rem; padding: 0.7rem 1rem; border-radius: 14px; background: var(--paper); color: var(--ink); box-shadow: 0 8px 28px rgba(59, 42, 34, 0.18); font-weight: 700; }
+.wake-banner.is-failed .wake-banner-box { border: 2px solid var(--orange-deep); }
+.wake-spinner { inline-size: 1rem; block-size: 1rem; border-radius: 50%; border: 3px solid var(--taupe); border-block-start-color: var(--orange-deep); animation: wake-spin 0.9s linear infinite; flex: none; }
+@keyframes wake-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .wake-spinner { animation: none; border-color: var(--orange-deep); } }
+
 /* Ledger corrections (staff portal). The badges say "Reversal" and
    "Reversed" in words and the reversed amount is struck through, so the
    state never depends on colour alone. Logical properties, so the layout
