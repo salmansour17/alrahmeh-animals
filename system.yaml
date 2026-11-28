@@ -5,25 +5,25 @@
 # this file against system.schema.json and against the code
 # (contracts/check_contracts.py), so it cannot drift from what is deployed.
 #
-# Placeholders to fill in once, after the Azure setup:
-#   <STUDENT>  IE username (the part of the IE email before @)
-#   <PREFIX>   the same with dots replaced by hyphens
-#   <PREFIXNH> the prefix without hyphens
-#   <N>        the zone number in the static website address Azure assigns
+# Names on Azure, as deployed: every resource name starts with the prefix (the
+# IE username with its dot replaced by a hyphen), the storage account uses the
+# prefix without hyphens because its names allow only letters and digits, and
+# the z1 in the website address is the zone Azure assigned (Terraform output
+# website_url, recorded in docs/evidence/2026-11-25-first-deploy/).
 
-student: <STUDENT>
-prefix: <PREFIX>
-public_url: https://<PREFIXNH>ui.z<N>.web.core.windows.net
+student: snsour.ieu2024
+prefix: snsour-ieu2024
+public_url: https://snsourieu2024ui.z1.web.core.windows.net
 
 ui:
   path: ui
-  storage_account: <PREFIXNH>ui
+  storage_account: snsourieu2024ui
   calls: [animals, donations, enquiries]
 
 azure:
-  resource_group: rg-<PREFIX>
-  container_apps_environment: <PREFIX>-env
-  sql_server: <PREFIX>-sql
+  resource_group: rg-snsour-ieu2024
+  container_apps_environment: snsour-ieu2024-env
+  sql_server: snsour-ieu2024-sql
   registry: ghcr.io/salmansour17
 
 services:
@@ -52,8 +52,8 @@ services:
       RATE_LIMIT_STAFF_AUTH_WINDOW_S: { default: 900, description: "Window in seconds for the wrong-password limit (1-86400)" }
       TRUSTED_PROXY_HOPS: { default: 1, description: "Proxies in front of the app that append to X-Forwarded-For (the Container Apps ingress: 1); 0 trusts the header not at all (0-5). A nonsense value in any of these stops the start" }
     azure:
-      container_app: <PREFIX>-animals
-      sql_database: <PREFIX>-animals-db
+      container_app: snsour-ieu2024-animals
+      sql_database: snsour-ieu2024-animals-db
 
   donations:
     description: >
@@ -107,8 +107,8 @@ services:
           one call (cached for ANIMAL_NAMES_TTL_S); if that fails, the list
           still loads and shows ids. The earmark check never uses the cache.
     azure:
-      container_app: <PREFIX>-donations
-      sql_database: <PREFIX>-donations-db
+      container_app: snsour-ieu2024-donations
+      sql_database: snsour-ieu2024-donations-db
 
   enquiries:
     description: >
@@ -134,5 +134,5 @@ services:
       RATE_LIMIT_STAFF_AUTH_WINDOW_S: { default: 900, description: "Window in seconds for the wrong-password limit (1-86400)" }
       TRUSTED_PROXY_HOPS: { default: 1, description: "Proxies in front of the app that append to X-Forwarded-For (the Container Apps ingress: 1); 0 trusts the header not at all (0-5). A nonsense value in any of these stops the start" }
     azure:
-      container_app: <PREFIX>-enquiries
-      sql_database: <PREFIX>-enquiries-db
+      container_app: snsour-ieu2024-enquiries
+      sql_database: snsour-ieu2024-enquiries-db

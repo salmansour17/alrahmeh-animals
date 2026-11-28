@@ -13,6 +13,11 @@ and foster requests are tied to actual animals and decided by staff. It also
 carries over everything else the old site offered except its news: the
 rescue's story, volunteering, contact details and the gift shop.
 
+**Live:** https://snsourieu2024ui.z1.web.core.windows.net (Azure, deployed
+from `main` by `cd.yml`). The services scale to zero when idle, so the first
+visit after a quiet spell can take up to a minute; the site says so while it
+waits.
+
 ## Feature domains
 
 | Domain | Responsibility |
@@ -278,6 +283,153 @@ a peach-to-sage hero with tilted tags, a paw-shaped hero whose toes show
 adoptable animals and link to their profiles, and an arch-shaped profile with
 PREV and NEXT. The logo is the rescue's own, recoloured blue.
 
+## Deploying to Azure
+
+Every push to `main` deploys through `.github/workflows/cd.yml`, and only after
+the five check workflows pass on the same commit. What the workflow expects
+(secrets, variables, Terraform state) is listed in
+[`docs/deployment.md`](docs/deployment.md). The rest of this section is the
+one-time setup that has to exist before its first run.
+
+### Live system
+
+| What | Where |
+|---|---|
+| Website | https://snsourieu2024ui.z1.web.core.windows.net |
+| animals | https://snsour-ieu2024-animals.politewater-5e265943.germanywestcentral.azurecontainerapps.io |
+| donations | https://snsour-ieu2024-donations.politewater-5e265943.germanywestcentral.azurecontainerapps.io |
+| enquiries | https://snsour-ieu2024-enquiries.politewater-5e265943.germanywestcentral.azurecontainerapps.io |
+| Resource group | `rg-snsour-ieu2024` (Container Apps and storage in `germanywestcentral`, SQL server in `spaincentral`) |
+
+Each service answers `GET /health`. These addresses come from Terraform's
+outputs (`website_url`, `service_urls`), recorded in
+`docs/evidence/2026-11-25-first-deploy/`.
+
+### Bootstrap (once, by hand)
+
+The pipeline's identity is Contributor on one resource group. Contributor
+cannot assign roles, and nothing can create the group it lives in or the
+identity it signs in as, so these few things are created once by the
+subscription's owner. After that, nothing in Azure is changed by hand; only
+the pipeline changes it.
+
+The scripts are in [`infra/bootstrap/`](infra/bootstrap/). Every name in them
+comes from `infra/bootstrap/common.sh` (the values in `system.yaml`), and each
+can be overridden from the environment. They contain no secrets, check before
+they create anything, and can be run again safely. Run them in **Azure Cloud
+Shell (Bash)**, which already has `az` and `gh`.
+
+Steps marked **(by hand)** need a person in the Azure portal or in GitHub's
+settings.
+
+**0. Sign in (by hand).** Open Cloud Shell as the subscription's owner, clone
+the repository, and run `gh auth login` as someone who can change the
+repository's settings.
+
+**1. Providers and resource group:** `infra/bootstrap/01-providers-and-group.sh`.
+- *What it does:* registers `Microsoft.App`, `Microsoft.OperationalInsights`,
+  `Microsoft.Sql`, `Microsoft.Storage` and `Microsoft.ManagedIdentity`, then
+  creates `rg-snsour-ieu2024`. Terraform registers nothing itself
+  (`resource_provider_registrations = "none"`), because registering needs
+  rights over the whole subscription.
+- *Verify:* `az provider show --namespace Microsoft.App --query registrationState`
+  says `Registered`, and `az group show --name rg-snsour-ieu2024` finds the group.
+- *Tear down:* `az group delete --name rg-snsour-ieu2024` deletes the group
+  and **everything in it**: the services, the databases with their data, the
+  website and Terraform's state. It cannot be undone. Providers can stay
+  registered; they cost nothing.
+
+**2. Storage:** `infra/bootstrap/02-storage.sh`.
+- *What it does:* creates the storage account `snsourieu2024ui` (HTTPS only,
+  TLS 1.2, no anonymous blob access), turns on the static website with
+  `index.html` as the 404 page too, so a link such as `/animals/3` loads the
+  React app instead of an error, and creates the private `tfstate` container
+  for Terraform's state.
+- *Verify:* `az storage blob service-properties show --account-name snsourieu2024ui --auth-mode key --query staticWebsite`
+  shows `enabled: true` with both documents set to `index.html`, and
+  `az storage container list --account-name snsourieu2024ui --auth-mode key --output table`
+  lists `tfstate`.
+- *Tear down:* `az storage account delete --name snsourieu2024ui --resource-group rg-snsour-ieu2024`.
+  This also deletes Terraform's state, so do it only after everything
+  Terraform created is gone.
+
+**3. The pipeline's identity:** `infra/bootstrap/03-pipeline-identity.sh`.
+- *What it does:* creates the managed identity `snsour-ieu2024-github`, gives
+  it Contributor on the resource group only, and trusts GitHub's sign-in
+  tokens (OIDC) for it, but only from the `main` branch of this repository,
+  so a branch or a fork cannot deploy. There is no password.
+- *Verify:* `az identity federated-credential list --identity-name snsour-ieu2024-github --resource-group rg-snsour-ieu2024 --query "[].subject"`
+  shows the two `...:ref:refs/heads/main` subjects, and
+  `az role assignment list --assignee <its principalId> --all --output table`
+  shows exactly one role, Contributor, on `rg-snsour-ieu2024`.
+- *Tear down:* `az role assignment delete --assignee <its principalId> --role Contributor --resource-group rg-snsour-ieu2024`,
+  then `az identity delete --name snsour-ieu2024-github --resource-group rg-snsour-ieu2024`
+  (its trust entries go with it).
+
+**4. GitHub settings:** `infra/bootstrap/04-github-settings.sh`.
+- *What it does:* sets the variables `PREFIX`, `LOCATION`, `SQL_LOCATION`,
+  `RESOURCE_GROUP` and `UI_STORAGE`; stores the identity's client ID and the
+  tenant and subscription IDs as secrets; and asks, at a hidden prompt, for
+  each password secret that is not set yet (`SQL_ADMIN_PASSWORD`, the three
+  `*_DB_PASSWORD`, `ADMIN_PASSWORD`). The database passwords go into a
+  connection string, so use letters and digits only.
+- **(by hand, optional)** Stripe: create the test-mode key and webhook in the
+  Stripe dashboard and set `STRIPE_SECRET_KEY` and `STRIPE_WEBHOOK_SECRET`
+  with `gh secret set` (see "Card donations"). Without them, card donations
+  stay off and everything else works.
+- *Verify:* `gh secret list` and `gh variable list` show every name in the
+  header of `cd.yml`. Values are never shown.
+- *Tear down:* `gh secret delete <NAME>` and `gh variable delete <NAME>` for
+  each.
+
+**5. Reader for the professors:** `infra/bootstrap/05-professor-reader.sh`.
+- *What it does:* gives each professor Reader on the resource group, the
+  narrowest scope that shows the whole project: they can see every resource,
+  its settings and logs, and change nothing. Their addresses are supplied
+  when it runs and are never stored in this repository:
+  `PROFESSOR_EMAIL_1=... PROFESSOR_EMAIL_2=... ./05-professor-reader.sh`.
+  Without both, it stops before calling Azure.
+- **(by hand, if needed)** If Azure says a user does not exist, invite them
+  first as a guest (portal: Microsoft Entra ID > Users > Invite external user).
+- *Verify:* `az role assignment list --resource-group rg-snsour-ieu2024 --role Reader --output table`.
+- *Tear down:* `az role assignment delete --assignee <address> --role Reader --resource-group rg-snsour-ieu2024`.
+
+**6. First deploy.** Push to `main` (through a pull request: `main` is
+protected). The first run is expected to fail until steps 7 and 8 are done:
+- **(by hand)** the Container Apps cannot pull the images until each GHCR
+  package (`alrahmeh-animals`, `alrahmeh-donations`, `alrahmeh-enquiries`) is
+  made public in its GitHub package settings;
+- the services cannot sign in to their databases until their users exist
+  (step 7), so the health check times out.
+- *Verify:* the run's Terraform step shows the Container Apps and the SQL
+  server, and its database step prints three `... created`.
+
+**7. The database users:** `infra/bootstrap/create-db-users.ps1`, run in
+PowerShell on your own machine (it uses Docker for `az` and `sqlcmd`, signed in
+through the `alrahmeh-azure-cli` volume), after step 6 has created the
+databases.
+- *What it does:* opens the SQL firewall to your own IP only, creates each
+  service's own user inside its own database (`animals_app`,
+  `donations_app`, `enquiries_app`) with only the roles its migrations and
+  queries need, and removes the firewall rule again whatever happens. It asks
+  for the passwords at hidden prompts; they are the same values as the GitHub
+  secrets.
+- *Verify:* it prints `ok: <user> in <database>` three times and
+  `Removing the temporary firewall rule`.
+- *Tear down:* the users are deleted with their databases.
+
+**8. Re-run the failed deploy.** The health step must show every service
+answering `{"status": "ok", "db": "ok"}`.
+- *Verify:* `curl https://snsour-ieu2024-animals.politewater-5e265943.germanywestcentral.azurecontainerapps.io/health`
+  (and the same for the other two); the first call after a quiet spell can
+  take up to a minute while the service and its database wake up.
+
+**Tearing everything down.** `az group delete --name rg-snsour-ieu2024`
+removes every Azure resource of the project at once (step 1). Then remove the
+GitHub secrets and variables (step 4) and make the three GHCR packages
+private or delete them. The identity's role and the professors' Reader role
+were scoped to the group and go with it.
+
 ## Tests
 
 Each service is tested on its own, from its own folder, against a real SQL
@@ -302,13 +454,26 @@ leaves no trace, no migration drops anything), the connection retry, and CORS.
 The donations tests check the call to the animals service over real HTTP,
 against a stand-in served on a random local port (`tests/animals_stub.py`).
 
-Coverage on SQL Server, measured 2026-11-18:
+The website's tests (Vitest) cover the code that waits for a sleeping service
+(`ui/src/net/`), with a scripted stand-in for the network and a fake clock:
 
-| Service | Tests | Domain coverage |
+```powershell
+cd ui; npm ci; npm test
+```
+
+Measured 2026-11-28 at commit `b310dd5`, services against SQL Server 2022 in a
+local container, with the commands above:
+
+| Suite | Tests | Coverage |
 |---|---|---|
-| animals | 243 passed | 100% |
-| donations | 234 passed | 100% |
-| enquiries | 78 passed | 100% |
+| animals | 337 passed | 100% of the domain package (626 statements) |
+| donations | 412 passed | 100% of the domain package (602 statements) |
+| enquiries | 156 passed | 100% of the domain package (140 statements) |
+| website | 33 passed | not measured |
+
+CI fails a service below 70%. The figure counts each service's domain package
+only, not its shared modules such as `db.py` or `migrate.py`, which are tested
+but not measured (ADR-9).
 
 ### Clean-clone check of the Assignment 1 monolith (2026-10-04)
 
